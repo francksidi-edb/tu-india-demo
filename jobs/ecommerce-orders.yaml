@@ -1,0 +1,53 @@
+version: v1.0
+source:
+  kafka:
+    brokers:
+      - localhost:9092
+    topic: ecommerce-orders
+    value:
+      json:
+        column:
+          name: order_data
+          type: JSON
+    control:
+      consistency: at-least-once
+    task:
+      batch_size:
+        interval_ms: 1000
+target:
+  database:
+    host: localhost
+    port: 5432
+    user: gpadmin
+    dbname: streaming_demo
+    error_limit: -1
+    tables:
+    - table: ecommerce_orders
+      schema: public
+      mode:
+        insert: {}
+      mapping:
+        order_id: (order_data->>'order_id')::varchar(50)
+        timestamp: (order_data->>'timestamp')::timestamp
+        customer_id: (order_data->>'customer_id')::varchar(20)
+        customer_name: (order_data->>'customer_name')::varchar(100)
+        customer_email: (order_data->>'customer_email')::varchar(100)
+        product_id: (order_data->>'product_id')::varchar(20)
+        product_name: (order_data->>'product_name')::varchar(200)
+        category: (order_data->>'category')::varchar(50)
+        quantity: (order_data->>'quantity')::integer
+        unit_price: (order_data->>'unit_price')::decimal(10,2)
+        total_price: (order_data->>'total_price')::decimal(10,2)
+        payment_method: (order_data->>'payment_method')::varchar(50)
+        country: (order_data->>'country')::varchar(50)
+        city: (order_data->>'city')::varchar(100)
+        revenue_bucket: |
+          CASE 
+            WHEN (order_data->>'total_price')::decimal < 100 THEN 'low'
+            WHEN (order_data->>'total_price')::decimal < 500 THEN 'medium'
+            WHEN (order_data->>'total_price')::decimal < 1000 THEN 'high'
+            ELSE 'premium'
+          END
+        is_bulk_order: (order_data->>'quantity')::integer > 2
+        processing_time: NOW()
+

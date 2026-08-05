@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FlowServer — Real Streaming Demo</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F4F3EF;--surface:#FFF;--surface2:#EEEDEA;--border:#DDDBD5;--border2:#C8C5BD;
+  --text:#1A1A18;--muted:#6B6860;--faint:#9B9890;
+  --green:#1A7A4A;--green-bg:#EBF5EF;--green-bd:#B8DFC8;
+  --blue:#1A5A9A;--blue-bg:#EBF0F9;--blue-bd:#A0C0E0;
+  --amber:#9A6A00;--amber-bg:#FDF6E3;--amber-bd:#E0C060;
+  --red:#9A2A1A;--red-bg:#FCECEA;--red-bd:#E0A090;
+  --teal:#0F6E5A;--teal-bg:#E8F5F2;--teal-bd:#A8D8CE;
+  --purple:#5A3A9A;--purple-bg:#F0EBF9;--purple-bd:#C0A8E0;
+  --mono:'IBM Plex Mono',monospace;
+  --sans:'IBM Plex Sans',sans-serif;
+  --r:6px;--rl:10px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.6}
+
+/* ── HEADER ── */
+.site-header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 2rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.brand{font-weight:600;font-size:15px;display:flex;align-items:center;gap:10px}
+.brand-fs{color:var(--teal)}.brand-x{color:var(--border)}.brand-wpg{color:var(--blue)}
+.header-right{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#ccc;flex-shrink:0}
+.status-dot.ok{background:var(--green);box-shadow:0 0 5px rgba(26,122,74,.4)}
+.status-dot.err{background:var(--red)}
+.ext-badge{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-family:var(--mono);font-size:11px}
+.badge-teal{background:var(--teal-bg);border-color:var(--teal-bd);color:var(--teal)}
+.badge-blue{background:var(--blue-bg);border-color:var(--blue-bd);color:var(--blue)}
+.badge-green{background:var(--green-bg);border-color:var(--green-bd);color:var(--green)}
+
+/* ── TABS ── */
+.tab-bar{background:var(--surface);border-bottom:2px solid var(--border);padding:0 2rem;display:flex;gap:0;overflow-x:auto}
+.tab{padding:12px 18px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap;transition:color .15s,border-color .15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--teal);border-bottom-color:var(--teal)}
+
+/* ── LAYOUT ── */
+.page{max-width:1280px;margin:0 auto;padding:2rem}
+.panel{display:none}.panel.active{display:block}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);margin-bottom:1.5rem;overflow:hidden}
+.section-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;transition:background .1s}
+.section-header:hover{background:var(--surface2)}
+.section-num{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:30px}
+.section-title{font-weight:600;font-size:14px;flex:1}
+.section-desc{font-size:12px;color:var(--muted);max-width:460px}
+.section-body{padding:20px;display:none}
+.section-body.open{display:block}
+.chevron{color:var(--faint);font-size:12px;transition:transform .2s}
+.chevron.open{transform:rotate(180deg)}
+
+/* ── KPIs ── */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--surface2);border-radius:var(--r);padding:13px 15px}
+.kpi-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.kpi-val{font-family:var(--mono);font-size:21px;font-weight:500;line-height:1.1}
+.kpi-val.green{color:var(--green)}.kpi-val.blue{color:var(--blue)}.kpi-val.teal{color:var(--teal)}
+.kpi-val.amber{color:var(--amber)}.kpi-val.red{color:var(--red)}
+.kpi-sub{font-size:11px;color:var(--faint);margin-top:2px}
+
+/* ── TABLE ── */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;padding:7px 10px;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--surface2)}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r)}
+code{font-family:var(--mono);font-size:12px;background:var(--surface2);padding:2px 5px;border-radius:3px;color:var(--teal)}
+
+/* ── BADGES ── */
+.badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:3px;font-weight:500}
+.bg{background:var(--green-bg);color:var(--green)}.bb{background:var(--blue-bg);color:var(--blue)}
+.ba{background:var(--amber-bg);color:var(--amber)}.bt{background:var(--teal-bg);color:var(--teal)}
+.br{background:var(--red-bg);color:var(--red)}.bp{background:var(--purple-bg);color:var(--purple)}
+
+/* ── CONTROL PANEL ── */
+.ctrl-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px}
+.ctrl-card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.ctrl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.ctrl-row:last-child{margin-bottom:0}
+.ctrl-label{font-size:12px;color:var(--muted);white-space:nowrap;min-width:80px}
+.run-btn{background:var(--teal);color:#fff;border:none;padding:6px 14px;border-radius:var(--r);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;transition:opacity .15s;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.run-btn:hover{opacity:.85}
+.run-btn:disabled{opacity:.5;cursor:not-allowed}
+.run-btn.secondary{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+.run-btn.secondary:hover{background:var(--surface2)}
+.run-btn.danger{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+.run-btn.danger:hover{background:#f7d8d5}
+.run-btn.success{background:var(--green-bg);color:var(--green);border:1px solid var(--green-bd)}
+select,input[type=number]{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--sans);font-size:13px;padding:5px 9px;border-radius:var(--r);outline:none}
+select:focus,input:focus{border-color:var(--teal)}
+
+/* ── STATUS INDICATORS ── */
+.proc-status{display:flex;align-items:center;gap:6px;font-size:13px;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+.proc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.proc-dot.running{background:var(--green);box-shadow:0 0 5px rgba(26,122,74,.4)}
+.proc-dot.stopped{background:var(--red)}
+.proc-dot.unknown{background:var(--faint)}
+.proc-name{font-family:var(--mono);font-size:12px;font-weight:500;flex:1}
+.proc-pid{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+@media(max-width:700px){.status-grid{grid-template-columns:1fr}}
+
+/* ── LIVE PULSE ── */
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.live-dot.active{background:var(--green);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(1.2)}}
+
+/* ── SQL PANEL ── */
+.sql-panel{border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-top:14px}
+.sql-panel-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--surface2);border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.sql-panel-header:hover{background:#E5E4DF}
+.sql-label{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--teal);display:flex;align-items:center;gap:6px}
+.sql-label::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--teal);display:inline-block}
+.sql-toggle-hint{font-size:11px;color:var(--faint)}
+.sql-body{display:none;background:#1B1F27}
+.sql-body.open{display:block}
+.sql-pre{margin:0;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.85;color:#ABB2BF;overflow-x:auto;white-space:pre;max-height:420px;overflow-y:auto}
+.sql-footer{display:flex;justify-content:flex-end;padding:7px 14px;background:#161A22;border-top:1px solid #2A2F3A}
+.copy-btn{background:#2A2F3A;border:1px solid #3A4050;color:#8A95A8;font-family:var(--mono);font-size:11px;padding:4px 12px;border-radius:4px;cursor:pointer;transition:all .15s}
+.copy-btn:hover{background:#3A4050;color:#ABB2BF}
+.copy-btn.copied{color:#4EC9A0;border-color:#4EC9A0}
+.s-kw{color:#C678DD}.s-fn{color:#61AFEF}.s-str{color:#98C379}
+.s-cm{color:#5C6370;font-style:italic}.s-num{color:#D19A66}.s-yaml-key{color:#E5C07B}
+
+/* ── STREAM TICKER ── */
+.stream-box{background:#1B1F27;border:1px solid var(--border);border-radius:var(--r);height:210px;overflow-y:auto;font-family:var(--mono);font-size:11px;padding:10px 12px}
+.stream-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);line-height:1.5;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.s-ts{color:#5C6370;min-width:86px;flex-shrink:0}
+.s-id{color:#56B6C2;min-width:80px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.s-val{color:#98C379;min-width:75px;flex-shrink:0}
+.s-tag{min-width:70px;flex-shrink:0}
+.s-tag.low{color:#98C379}.s-tag.medium{color:#D19A66}.s-tag.high{color:#E5C07B}.s-tag.premium{color:#E06C75}
+.s-tag.normal{color:#98C379}.s-tag.high_temp,.s-tag.low_temp{color:#E06C75}
+.s-tag.high_humidity{color:#61AFEF}.s-tag.low_battery{color:#D19A66}
+.s-dim{color:#5C6370}
+
+/* ── CHARTS ── */
+.chart-wrap{position:relative;height:200px}
+.chart-wrap.tall{height:250px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:860px){.two-col{grid-template-columns:1fr}}
+.chart-label{font-size:12px;color:var(--muted);margin-bottom:10px}
+
+/* ── SENSOR CARDS ── */
+.sensors-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.sensor-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:13px}
+.sensor-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.sensor-id{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--teal)}
+.sensor-loc{font-size:11px;color:var(--muted);margin-bottom:8px}
+.sensor-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+.sk{color:var(--muted)}.sv{font-family:var(--mono);font-weight:500}
+.bat-bar{height:4px;border-radius:2px;background:var(--border);margin-top:8px;overflow:hidden}
+.bat-fill{height:100%;border-radius:2px;transition:width .6s}
+
+/* ── PIPELINE ── */
+.pipeline{display:flex;align-items:center;overflow-x:auto;padding:12px 0 14px;gap:0}
+.pipe-node{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:9px 14px;text-align:center;min-width:100px;flex-shrink:0}
+.pipe-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.pipe-name{font-size:13px;font-weight:600}
+.pipe-arrow{color:var(--border2);font-size:18px;padding:0 5px;flex-shrink:0;transition:color .4s}
+.pipe-arrow.live{color:var(--teal)}
+
+/* ── LOG BOX ── */
+.log-box{background:#1B1F27;border:1px solid var(--border);border-radius:var(--r);height:180px;overflow-y:auto;font-family:var(--mono);font-size:11px;padding:10px 12px;color:#ABB2BF;white-space:pre-wrap;word-break:break-all}
+
+/* ── MISC ── */
+.loading{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:14px 0}
+.spinner{width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-box{background:var(--red-bg);border:1px solid var(--red-bd);border-radius:var(--r);padding:11px 14px;font-size:13px;color:var(--red);margin-top:8px}
+.info-box{background:var(--teal-bg);border:1px solid var(--teal-bd);border-radius:var(--r);padding:9px 14px;font-size:12px;color:var(--teal);margin-bottom:14px}
+.mbar-wrap{display:flex;flex-direction:column;gap:8px}
+.mbar-row{display:grid;grid-template-columns:100px 1fr 80px;gap:10px;align-items:center;font-size:12px}
+.mbar-label{color:var(--muted);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mbar{height:7px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)}
+.mbar-fill{height:100%;border-radius:4px;transition:width .6s}
+.mbar-val{font-family:var(--mono);font-size:12px;text-align:right}
+.output-msg{font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:var(--r);margin-top:8px}
+.output-msg.ok{background:var(--green-bg);color:var(--green);border:1px solid var(--green-bd)}
+.output-msg.err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header class="site-header">
+  <div class="brand">
+    <img src="favicon.svg" style="width:32px;height:32px;flex-shrink:0" alt="logo">
+    <span style="color:var(--border);font-weight:300;margin:0 2px">|</span>
+    <span class="brand-fs">FlowServer</span>
+    <span class="brand-x">×</span>
+    <span class="brand-wpg">WarehousePG</span>
+    <span style="color:var(--border);font-weight:300">|</span>
+    <span style="font-weight:400;font-size:13px;color:var(--muted)">Real Streaming Demo</span>
+  </div>
+  <div class="header-right">
+    <div class="live-dot" id="live-dot"></div>
+    <span id="live-label" style="font-size:12px">connecting…</span>
+    <div style="width:1px;height:18px;background:var(--border)"></div>
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text" style="color:var(--muted);font-size:12px">—</span>
+    <span class="ext-badge badge-teal" id="ecom-badge">— orders</span>
+    <span class="ext-badge badge-blue" id="iot-badge">— readings</span>
+    <span id="refresh-ts" style="font-family:var(--mono);font-size:10px;color:var(--faint)"></span>
+  </div>
+</header>
+
+<!-- ── TABS ── -->
+<div class="tab-bar">
+  <div class="tab active" id="tab-control"  onclick="switchTab('control')">⚙ Control</div>
+  <div class="tab"        id="tab-setup"    onclick="switchTab('setup')">🗄 DB Setup</div>
+  <div class="tab"        id="tab-overview" onclick="switchTab('overview')">📡 Live Streams</div>
+  <div class="tab"        id="tab-ecom"     onclick="switchTab('ecom')">🛒 E-Commerce</div>
+  <div class="tab"        id="tab-iot"      onclick="switchTab('iot')">🌡️ IoT Sensors</div>
+  <div class="tab"        id="tab-pipeline" onclick="switchTab('pipeline')">📋 Pipeline Config</div>
+</div>
+
+<div class="page">
+
+<!-- ══════════════════════════ DB SETUP ════════════════════════════════════ -->
+<div class="panel" id="panel-setup">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">00</span>
+      <span class="section-title">One-Time Setup — Run Order</span>
+      <span class="section-desc">Copy-paste these commands in sequence before starting the demo</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">Run these steps once per environment. After completing setup, go to <b>⚙ Control</b> to start FlowServer, submit jobs, and launch generators.</div>
+      <div id="setup-commands-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Create Database — <code>01_create_database.sql</code></span>
+      <span class="section-desc">Drops and recreates the <code>streaming_demo</code> database</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:12px">psql -h localhost -p 5432 -U gpadmin -d postgres -f sql/01_create_database.sql</div>
+      <div id="sql-01"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Create Tables — <code>02_create_tables.sql</code></span>
+      <span class="section-desc">Creates <code>ecommerce_orders</code> and <code>iot_sensor_readings</code> with all indexes</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:12px">psql -h localhost -p 5432 -U gpadmin -d streaming_demo -f sql/02_create_tables.sql</div>
+      <div id="sql-02"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Verify Setup — <code>03_verify_setup.sql</code></span>
+      <span class="section-desc">Checks tables exist, shows row counts and sample data</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:12px">psql -h localhost -p 5432 -U gpadmin -d streaming_demo -f sql/03_verify_setup.sql</div>
+      <div id="sql-03"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">04</span>
+      <span class="section-title">Create Kafka Topics</span>
+      <span class="section-desc">Two topics — JSON for orders, CSV for IoT sensors</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="kafka-topics-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">05</span>
+      <span class="section-title">Build Go Generators</span>
+      <span class="section-desc">Compile the data generators once before first run</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="build-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">06</span>
+      <span class="section-title">Submit FlowServer Jobs</span>
+      <span class="section-desc">Register jobs once — then use ⚙ Control tab to start/stop them</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="submit-jobs-panel"></div>
+    </div>
+  </div>
+
+</div><!-- /setup -->
+
+
+<!-- ══════════════════════════ CONTROL PANEL ═══════════════════════════════ -->
+<div class="panel active" id="panel-control">
+
+  <!-- Start All / Stop All -->
+  <div class="section">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">⚡</span>
+      <span class="section-title">Quick Actions</span>
+      <span class="section-desc">Start or stop the entire pipeline in one click</span>
+    </div>
+    <div class="section-body open" style="display:block">
+      <div class="ctrl-row" style="gap:12px">
+        <button class="run-btn" style="font-size:15px;padding:10px 28px" onclick="startAll()">▶ Start All</button>
+        <button class="run-btn danger" style="font-size:15px;padding:10px 28px" onclick="stopAll()">■ Stop All</button>
+        <button class="run-btn secondary" style="font-size:15px;padding:10px 28px;border-color:var(--amber);color:var(--amber)" onclick="resetAll()">↺ Reset &amp; Restart</button>
+        <span style="color:var(--muted);font-size:12px;margin-left:4px">FlowServer · Jobs · Generators</span>
+      </div>
+      <div id="all-output" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- Pipeline overview -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Pipeline Status</span>
+      <span class="section-desc">Live status of every component</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="pipeline" id="ctrl-pipeline">
+        <div class="pipe-node"><div class="pipe-label">Generators</div><div class="pipe-name" style="color:var(--blue)" id="pp-gen">Go</div></div>
+        <div class="pipe-arrow live">→</div>
+        <div class="pipe-node"><div class="pipe-label">Message Bus</div><div class="pipe-name" style="color:var(--purple)">Kafka</div></div>
+        <div class="pipe-arrow" id="pp-arrow-fs">→</div>
+        <div class="pipe-node"><div class="pipe-label">Stream Engine</div><div class="pipe-name" style="color:var(--teal)" id="pp-fs">FlowServer</div></div>
+        <div class="pipe-arrow" id="pp-arrow-db">→</div>
+        <div class="pipe-node"><div class="pipe-label">Warehouse</div><div class="pipe-name" style="color:var(--green)">WarehousePG</div></div>
+      </div>
+
+      <div class="status-grid" id="status-grid">
+        <div class="loading"><div class="spinner"></div>Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FlowServer control -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">FS</span>
+      <span class="section-title">FlowServer Process</span>
+      <span class="section-desc">Start / stop ./flowserver -c configs/flow_server.json</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">FlowServer daemon</div>
+        <div class="ctrl-row">
+          <button class="run-btn" onclick="fsStart()">▶ Start FlowServer</button>
+          <button class="run-btn danger" onclick="fsStop()">■ Stop FlowServer</button>
+          <button class="run-btn secondary" onclick="loadFsLog()">📋 Show Log</button>
+        </div>
+        <div id="fs-output"></div>
+        <div id="fs-log" style="display:none;margin-top:10px">
+          <div class="log-box" id="fs-log-box"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FlowServer jobs -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">JOBS</span>
+      <span class="section-title">FlowServer Jobs</span>
+      <span class="section-desc">Submit, start, stop individual jobs</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="jobs-status" class="status-grid" style="margin-bottom:14px">
+        <div class="loading"><div class="spinner"></div>Loading…</div>
+      </div>
+
+      <!-- ecommerce-orders -->
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">
+          <span class="live-dot" id="job-dot-ecom"></span>
+          ecommerce-orders  <span style="color:var(--faint);font-weight:400;font-size:11px">jobs/ecommerce-orders.yaml</span>
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn secondary" onclick="jobSubmit('ecommerce-orders')">📤 Submit</button>
+          <button class="run-btn" onclick="jobStart('ecommerce-orders')">▶ Start</button>
+          <button class="run-btn danger" onclick="jobStop('ecommerce-orders')">■ Stop</button>
+          <button class="run-btn secondary" onclick="jobRestart('ecommerce-orders')">↺ Restart</button>
+        </div>
+        <div id="job-output-ecom"></div>
+      </div>
+
+      <!-- iot-sensors-csv -->
+      <div class="ctrl-card" style="margin-top:10px">
+        <div class="ctrl-card-title">
+          <span class="live-dot" id="job-dot-iot"></span>
+          iot-sensors-csv  <span style="color:var(--faint);font-weight:400;font-size:11px">jobs/iot-sensors-csv.yaml</span>
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn secondary" onclick="jobSubmit('iot-sensors-csv')">📤 Submit</button>
+          <button class="run-btn" onclick="jobStart('iot-sensors-csv')">▶ Start</button>
+          <button class="run-btn danger" onclick="jobStop('iot-sensors-csv')">■ Stop</button>
+          <button class="run-btn secondary" onclick="jobRestart('iot-sensors-csv')">↺ Restart</button>
+        </div>
+        <div id="job-output-iot"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generators -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">GEN</span>
+      <span class="section-title">Data Generators</span>
+      <span class="section-desc">Push synthetic data into Kafka topics</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">Rate Configuration</div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">E-Com rate</span>
+          <input type="number" id="gen-ecom-rate" value="50" min="1" max="1000" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">orders/sec</span>
+          <span class="ctrl-label" style="margin-left:16px">IoT rate</span>
+          <input type="number" id="gen-iot-rate" value="20" min="1" max="1000" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">readings/sec</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">E-Com max</span>
+          <input type="number" id="gen-ecom-total" value="0" min="0" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">0 = unlimited</span>
+          <span class="ctrl-label" style="margin-left:16px">IoT max</span>
+          <input type="number" id="gen-iot-total" value="0" min="0" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">0 = unlimited</span>
+        </div>
+        <div class="ctrl-row" style="margin-top:4px">
+          <button class="run-btn" onclick="genStart('both')">▶ Start Both</button>
+          <button class="run-btn secondary" onclick="genStart('ecom')">▶ E-Com only</button>
+          <button class="run-btn secondary" onclick="genStart('iot')">▶ IoT only</button>
+          <button class="run-btn danger" onclick="genStop('both')">■ Stop Both</button>
+          <button class="run-btn danger" style="margin-left:0" onclick="genStop('ecom')">■ E-Com</button>
+          <button class="run-btn danger" style="margin-left:0" onclick="genStop('iot')">■ IoT</button>
+        </div>
+        <div id="gen-output"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /control -->
+
+
+<!-- ══════════════════════════ LIVE STREAMS ════════════════════════════════ -->
+<div class="panel" id="panel-overview">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Ingestion Counters</span>
+      <span class="section-desc">Total rows and last-minute throughput</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="kpi-row" id="ov-kpis">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Live Event Tickers</span>
+      <span class="section-desc">Latest rows landing in WarehousePG — refreshes every 2s</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-row" style="margin-bottom:12px">
+        <div class="live-dot active" id="ticker-pulse"></div>
+        <span style="font-size:12px;color:var(--muted)">Auto-refresh 2s</span>
+        <button class="run-btn secondary" onclick="pauseTicker()" id="ticker-btn" style="padding:4px 12px;font-size:12px">⏸ Pause</button>
+      </div>
+      <div class="two-col">
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="live-dot active" style="width:6px;height:6px"></span>ecommerce-orders → ecommerce_orders
+          </div>
+          <div class="stream-box" id="ecom-stream"><span style="color:#5C6370">Waiting…</span></div>
+        </div>
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="live-dot active" style="width:6px;height:6px"></span>iot-sensors-csv → iot_sensor_readings
+          </div>
+          <div class="stream-box" id="iot-stream"><span style="color:#5C6370">Waiting…</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /overview -->
+
+
+<!-- ══════════════════════════ E-COMMERCE ══════════════════════════════════ -->
+<div class="panel" id="panel-ecom">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Order Metrics</span>
+      <span class="section-desc">Revenue, throughput, computed buckets</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="kpi-row" id="ecom-kpis"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Revenue Analysis</span>
+      <span class="section-desc">Buckets, categories, throughput, geography</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="two-col" style="margin-bottom:16px">
+        <div><div class="chart-label">Revenue Buckets — order count</div><div class="chart-wrap"><canvas id="ch-ecom-buckets"></canvas></div></div>
+        <div><div class="chart-label">Top Categories by Revenue</div><div class="chart-wrap"><canvas id="ch-ecom-cats"></canvas></div></div>
+      </div>
+      <div class="two-col">
+        <div><div class="chart-label">Orders/min — last 10 min</div><div class="chart-wrap"><canvas id="ch-ecom-thru"></canvas></div></div>
+        <div><div class="chart-label">Revenue by Country</div><div id="ecom-countries" class="mbar-wrap"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Recent Orders</span>
+      <span class="section-desc">Latest 20 rows — including FlowServer computed columns</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="ecom-recent"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+</div><!-- /ecom -->
+
+
+<!-- ══════════════════════════ IoT ══════════════════════════════════════════ -->
+<div class="panel" id="panel-iot">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Sensor Overview</span>
+      <span class="section-desc">Total readings, active sensors, alert distribution</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="kpi-row" id="iot-kpis"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Alert, Comfort &amp; Buildings</span>
+      <span class="section-desc">FlowServer computed: alert_level, comfort_index, building</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="two-col" style="margin-bottom:16px">
+        <div><div class="chart-label">Alert Level Distribution</div><div class="chart-wrap"><canvas id="ch-iot-alerts"></canvas></div></div>
+        <div><div class="chart-label">Comfort Index</div><div class="chart-wrap"><canvas id="ch-iot-comfort"></canvas></div></div>
+      </div>
+      <div class="two-col">
+        <div><div class="chart-label">Avg Temperature by Building (°C)</div><div class="chart-wrap"><canvas id="ch-iot-bldg"></canvas></div></div>
+        <div><div class="chart-label">Readings/min — last 10 min</div><div class="chart-wrap"><canvas id="ch-iot-thru"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Sensor Cards</span>
+      <span class="section-desc">Per-sensor stats — temp, humidity, battery, alert level</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="sensors-grid" class="sensors-grid"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+</div><!-- /iot -->
+
+
+<!-- ══════════════════════════ PIPELINE CONFIG ═════════════════════════════ -->
+<div class="panel" id="panel-pipeline">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">FS</span>
+      <span class="section-title">FlowServer Job — ecommerce-orders.yaml</span>
+      <span class="section-desc">JSON from Kafka → computed columns → WarehousePG</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">FlowServer reads JSON from <code>ecommerce-orders</code>, applies SQL CASE expressions to compute <code>revenue_bucket</code>, <code>is_bulk_order</code>, and <code>processing_time</code> — all declared in YAML, zero application code.</div>
+      <div id="ecom-yaml-panel"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">FS</span>
+      <span class="section-title">FlowServer Job — iot-sensors-csv.yaml</span>
+      <span class="section-desc">CSV from Kafka → 8 computed columns → WarehousePG</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">FlowServer reads CSV (skip_header_lines: 1) and computes <code>alert_level</code>, <code>building</code>, <code>floor</code>, <code>temperature_f</code>, <code>comfort_index</code>, <code>battery_status</code>, <code>data_quality</code>, <code>processed_at</code> — declared in YAML.</div>
+      <div id="iot-yaml-panel"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">DB</span>
+      <span class="section-title">WarehousePG Schema</span>
+      <span class="section-desc">Table definitions — DISTRIBUTED BY and indexes</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="section-body">
+      <div id="schema-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">CONF</span>
+      <span class="section-title">FlowServer Config — flow_server.json</span>
+      <span class="section-desc">Port 6060 / gpfdist 6070 / Prometheus 9080</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="section-body">
+      <div id="fsconf-panel"></div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+</div><!-- /page -->
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+//  UTILS
+// ══════════════════════════════════════════════════════════════════════════════
+function toggle(hdr){
+  const b=hdr.nextElementSibling,c=hdr.querySelector('.chevron');
+  b.classList.toggle('open'); c.classList.toggle('open');
+}
+function switchTab(n){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+n).classList.add('active');
+  document.getElementById('tab-'+n).classList.add('active');
+}
+async function api(path, opts){
+  const r=await fetch(path, opts);
+  return r.json();
+}
+function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── SQL panel ─────────────────────────────────────────────────────────────────
+function sqlPanel(content, label, open=false){
+  // Detect YAML vs SQL and highlight accordingly
+  const esc = escH(content);
+  let h = esc
+    // YAML keys
+    .replace(/^(\s*)([\w_]+):/gm, '$1<span class="s-yaml-key">$2</span>:')
+    // SQL keywords
+    .replace(/\b(CASE|WHEN|THEN|ELSE|END|SELECT|FROM|WHERE|AND|OR|NOT|BETWEEN|IN|CAST|GROUP BY|ORDER BY|LIMIT|INSERT|INTO|CREATE|TABLE|IF|EXISTS|DROP|DISTRIBUTED|BY)\b/g,'<span class="s-kw">$1</span>')
+    .replace(/\b(SPLIT_PART|NOW|ROUND|COALESCE|DATE_TRUNC|COUNT|SUM|AVG|MAX|MIN)\b/g,'<span class="s-fn">$1</span>')
+    .replace(/(#[^\n]*)/g,'<span class="s-cm">$1</span>')
+    .replace(/(--[^\n]*)/g,'<span class="s-cm">$1</span>')
+    .replace(/('(?:[^'\\]|\\.)*')/g,'<span class="s-str">$1</span>')
+    .replace(/\b(\d+\.?\d*)\b/g,'<span class="s-num">$1</span>');
+  const uid='sp-'+Math.random().toString(36).slice(2,8);
+  const openCls = open ? 'open' : '';
+  const hint    = open ? 'click to hide' : 'click to show';
+  return `<div class="sql-panel">
+    <div class="sql-panel-header" onclick="tSql('${uid}')">
+      <span class="sql-label">${label}</span>
+      <span class="sql-toggle-hint" id="${uid}-h">${hint}</span>
+    </div>
+    <div class="sql-body ${openCls}" id="${uid}">
+      <pre class="sql-pre">${h}</pre>
+      <div class="sql-footer"><button class="copy-btn" onclick="cpSql('${uid}',this)">copy</button></div>
+    </div>
+  </div>`;
+}
+function tSql(uid){
+  const b=document.getElementById(uid),h=document.getElementById(uid+'-h');
+  h.textContent=b.classList.toggle('open')?'click to hide':'click to show';
+}
+function cpSql(uid,btn){
+  navigator.clipboard.writeText(document.getElementById(uid).querySelector('.sql-pre').textContent)
+    .then(()=>{btn.textContent='copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied')},2000)});
+}
+
+function showOutput(id, ok, msg){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.innerHTML = `<div class="output-msg ${ok?'ok':'err'}">${ok?'✓':'✗'} ${escH(msg)}</div>`;
+  setTimeout(()=>{ if(el) el.innerHTML=''; }, 4000);
+}
+
+function showToast(h){
+  let t=document.getElementById('_t');
+  if(!t){t=document.createElement('div');t.id='_t';
+    t.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1A1A18;color:#fff;padding:9px 18px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap';
+    document.body.appendChild(t);}
+  t.innerHTML=h; t.style.opacity='1';
+  clearTimeout(t._t); t._t=setTimeout(()=>t.style.opacity='0',2800);
+}
+
+Chart.defaults.font  = {family:"'IBM Plex Mono',monospace",size:11};
+Chart.defaults.color = '#9B9890';
+function mkChart(id, cfg){
+  const ex=Chart.getChart(id); if(ex) ex.destroy();
+  return new Chart(document.getElementById(id).getContext('2d'), cfg);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  STATUS POLL
+// ══════════════════════════════════════════════════════════════════════════════
+let lastStatus = {};
+
+async function loadStatus(){
+  try {
+    const d = await api('/api/status');
+    lastStatus = d;
+
+    // Header
+    document.getElementById('status-dot').className = 'status-dot ' + (d.db_ok ? 'ok' : 'err');
+    document.getElementById('status-text').textContent = d.db_ok ? 'DB connected' : 'DB error';
+    document.getElementById('ecom-badge').textContent  = (d.ecommerce?.total||0).toLocaleString()+' orders';
+    document.getElementById('iot-badge').textContent   = (d.iot?.total||0).toLocaleString()+' readings';
+    document.getElementById('refresh-ts').textContent  = new Date().toLocaleTimeString();
+
+    // Live dot
+    const flowing = (d.ecommerce?.last_min||0)+(d.iot?.last_min||0) > 0;
+    document.getElementById('live-dot').className = 'live-dot'+(flowing?' active':'');
+    document.getElementById('live-label').textContent = flowing
+      ? `Flowing — ${d.ecommerce?.last_min||0} orders/min · ${d.iot?.last_min||0} readings/min`
+      : 'No data in last minute';
+
+    // Overview KPIs
+    document.getElementById('ov-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">E-Com Orders</div><div class="kpi-val teal">${(d.ecommerce?.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Orders/min</div><div class="kpi-val green">${d.ecommerce?.last_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">IoT Readings</div><div class="kpi-val blue">${(d.iot?.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Readings/min</div><div class="kpi-val green">${d.iot?.last_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Last E-Com</div><div class="kpi-val" style="font-size:13px">${(d.ecommerce?.latest||'—').slice(11,19)||'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Last IoT</div><div class="kpi-val" style="font-size:13px">${(d.iot?.latest||'—').slice(11,19)||'—'}</div></div>`;
+
+    // Control tab — process status grid
+    const p = d.processes || {};
+    const j = d.jobs || {};
+    const procItems = [
+      {key:'flowserver',       label:'FlowServer',       port:6060},
+      {key:'order-generator',  label:'order-generator',  port:null},
+      {key:'iot-generator',    label:'iot-generator',    port:null},
+      {key:'dashboard-api',    label:'dashboard-api',    port:5055},
+    ];
+    document.getElementById('status-grid').innerHTML = procItems.map(item=>{
+      const info = p[item.key] || {};
+      const running = info.running;
+      return `<div class="proc-status">
+        <div class="proc-dot ${running?'running':'stopped'}"></div>
+        <span class="proc-name">${item.label}</span>
+        <span class="proc-pid">${running ? 'PID '+(info.pid||'?') : 'stopped'}</span>
+      </div>`;
+    }).join('');
+
+    // Pipeline arrows
+    const fsRunning  = p['flowserver']?.running;
+    const genRunning = p['order-generator']?.running || p['iot-generator']?.running;
+    document.getElementById('pp-arrow-fs').className = 'pipe-arrow'+(fsRunning?' live':'');
+    document.getElementById('pp-arrow-db').className = 'pipe-arrow'+(flowing?' live':'');
+
+    // Job dots
+    ['ecommerce-orders','iot-sensors-csv'].forEach(jn=>{
+      const dotId = 'job-dot-'+(jn==='ecommerce-orders'?'ecom':'iot');
+      const dot = document.getElementById(dotId);
+      if(dot) dot.className = 'live-dot'+(j[jn]?.running?' active':'');
+    });
+
+    // Jobs status grid
+    document.getElementById('jobs-status').innerHTML = Object.entries(j).map(([name, info])=>`
+      <div class="proc-status">
+        <div class="proc-dot ${info.running?'running':'stopped'}"></div>
+        <span class="proc-name">${name}</span>
+        <span class="proc-pid">${info.running ? 'running' : 'stopped'}</span>
+      </div>`).join('');
+
+  } catch(e){
+    document.getElementById('status-dot').className = 'status-dot err';
+    document.getElementById('status-text').textContent = 'API error';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  START ALL / STOP ALL
+// ══════════════════════════════════════════════════════════════════════════════
+async function startAll(){
+  const el = document.getElementById('all-output');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Starting everything…</div>';
+  const body = {
+    ecom_rate:  +document.getElementById('gen-ecom-rate').value,
+    iot_rate:   +document.getElementById('gen-iot-rate').value,
+    ecom_total: +document.getElementById('gen-ecom-total').value,
+    iot_total:  +document.getElementById('gen-iot-total').value,
+  };
+  const d = await api('/api/start_all', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const stepsHtml = (d.steps||[]).map(s=>`<div style="color:var(--green)">✓ ${escH(s)}</div>`).join('');
+  const errHtml   = (d.errors||[]).map(e=>`<div style="color:var(--red)">✗ ${escH(e)}</div>`).join('');
+  el.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12px;line-height:1.8">
+    ${stepsHtml}${errHtml}
+  </div>`;
+  if(d.ok) showToast('▶ Pipeline started');
+  setTimeout(loadStatus, 1500);
+}
+
+async function stopAll(){
+  const el = document.getElementById('all-output');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Stopping everything…</div>';
+  const d = await api('/api/stop_all', {method:'POST'});
+  const stepsHtml = (d.steps||[]).map(s=>`<div style="color:var(--muted)">■ ${escH(s)}</div>`).join('');
+  el.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12px;line-height:1.8">
+    ${stepsHtml}
+  </div>`;
+  showToast('■ Pipeline stopped');
+  setTimeout(loadStatus, 1000);
+}
+
+async function resetAll(){
+  const el = document.getElementById('all-output');
+  if(!confirm('This will TRUNCATE the tables, delete & recreate Kafka topics, and restart everything. Continue?')) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Resetting — this takes ~20s…</div>';
+  const body = {
+    ecom_rate:  +document.getElementById('gen-ecom-rate').value,
+    iot_rate:   +document.getElementById('gen-iot-rate').value,
+    ecom_total: +document.getElementById('gen-ecom-total').value,
+    iot_total:  +document.getElementById('gen-iot-total').value,
+  };
+  const d = await api('/api/reset_all', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const lines = [...(d.steps||[]).map(s=>{
+    const isHeader = s.startsWith('──');
+    const isErr = d.errors?.includes(s);
+    const color = isHeader ? 'var(--muted)' : isErr ? 'var(--red)' : s.includes('stopped')||s.includes('not running') ? 'var(--muted)' : 'var(--green)';
+    const icon  = isHeader ? '' : isErr ? '✗ ' : s.includes('stopped')||s.includes('not running') ? '■ ' : '✓ ';
+    return `<div style="color:${color};font-weight:${isHeader?'600':'400'}">${icon}${escH(s)}</div>`;
+  })];
+  el.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12px;line-height:1.9">${lines.join('')}</div>`;
+  showToast(d.ok ? '↺ Reset complete — demo running fresh' : '⚠ Reset had errors');
+  setTimeout(loadStatus, 2000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  FLOWSERVER CONTROL
+// ══════════════════════════════════════════════════════════════════════════════
+async function fsStart(){
+  showOutput('fs-output', true, 'Starting FlowServer…');
+  const d = await api('/api/flowserver/start', {method:'POST'});
+  showOutput('fs-output', d.ok, d.message || (d.error||''));
+  if(d.log) showFsLog(d.log);
+  loadStatus();
+}
+async function fsStop(){
+  const d = await api('/api/flowserver/stop', {method:'POST'});
+  showOutput('fs-output', d.ok, d.message || '');
+  loadStatus();
+}
+async function loadFsLog(){
+  const logDiv = document.getElementById('fs-log');
+  const d = await api('/api/flowserver/log?n=50');
+  document.getElementById('fs-log-box').textContent = d.log || '(empty)';
+  logDiv.style.display = logDiv.style.display === 'none' ? 'block' : 'none';
+}
+function showFsLog(txt){
+  document.getElementById('fs-log-box').textContent = txt;
+  document.getElementById('fs-log').style.display = 'block';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  JOB CONTROL
+// ══════════════════════════════════════════════════════════════════════════════
+function jobOutputId(name){ return 'job-output-'+(name==='ecommerce-orders'?'ecom':'iot'); }
+
+async function jobSubmit(name){
+  showOutput(jobOutputId(name), true, `Submitting ${name}…`);
+  const d = await api(`/api/jobs/${name}/submit`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  loadStatus();
+}
+async function jobStart(name){
+  const d = await api(`/api/jobs/${name}/start`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  showToast(d.ok ? `✓ Job <b>${name}</b> started` : `✗ ${d.output||d.error||''}`);
+  loadStatus();
+}
+async function jobStop(name){
+  const d = await api(`/api/jobs/${name}/stop`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  showToast(`■ Job <b>${name}</b> stopped`);
+  loadStatus();
+}
+async function jobRestart(name){
+  showOutput(jobOutputId(name), true, `Restarting ${name}…`);
+  const d = await api(`/api/jobs/${name}/restart`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  loadStatus();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  GENERATOR CONTROL
+// ══════════════════════════════════════════════════════════════════════════════
+async function genStart(target){
+  const body = {
+    target,
+    ecom_rate:  +document.getElementById('gen-ecom-rate').value,
+    iot_rate:   +document.getElementById('gen-iot-rate').value,
+    ecom_total: +document.getElementById('gen-ecom-total').value,
+    iot_total:  +document.getElementById('gen-iot-total').value,
+  };
+  const d = await api('/api/generators/start', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const msg = d.started?.length ? `Started: ${d.started.join(', ')}` : 'Already running';
+  showOutput('gen-output', true, msg);
+  showToast('▶ Generators started');
+  loadStatus();
+}
+async function genStop(target){
+  const d = await api('/api/generators/stop', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target})
+  });
+  const msg = d.stopped?.length ? `Stopped: ${d.stopped.join(', ')}` : 'Already stopped';
+  showOutput('gen-output', true, msg);
+  showToast('■ Generators stopped');
+  loadStatus();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LIVE TICKERS
+// ══════════════════════════════════════════════════════════════════════════════
+let ecomRows=[], iotRows=[], tickerPaused=false;
+
+async function loadTickers(){
+  if(tickerPaused) return;
+  const [e, i] = await Promise.all([api('/api/ecom/recent'), api('/api/iot/recent')]);
+  ecomRows = Array.isArray(e) ? e : [];
+  iotRows  = Array.isArray(i) ? i : [];
+  renderTickers();
+}
+function renderTickers(){
+  const eBox = document.getElementById('ecom-stream');
+  if(ecomRows.length){
+    eBox.innerHTML = ecomRows.map(r=>`<div class="stream-row">
+      <span class="s-ts">${String(r.timestamp||'').slice(11,19)}</span>
+      <span class="s-id">${r.order_id||'—'}</span>
+      <span class="s-val">$${parseFloat(r.total_price||0).toFixed(0)}</span>
+      <span class="s-tag ${r.revenue_bucket||''}">${r.revenue_bucket||'—'}</span>
+      <span class="s-dim">${r.category||''} · ${r.country||''}</span>
+    </div>`).join('');
+  }
+  const iBox = document.getElementById('iot-stream');
+  const ac = ['#98C379','#D19A66','#E5C07B','#E06C75'];
+  if(iotRows.length){
+    iBox.innerHTML = iotRows.map(r=>`<div class="stream-row">
+      <span class="s-ts">${String(r.timestamp||'').slice(11,19)}</span>
+      <span class="s-id">${r.sensor_id||'—'}</span>
+      <span class="s-val">${r.temperature!=null?parseFloat(r.temperature).toFixed(1)+'°C':'—'}</span>
+      <span class="s-tag ${r.status||''}">${r.status||'—'}</span>
+      <span style="color:${ac[r.alert_level||0]};min-width:70px">L${r.alert_level??'?'} ${r.comfort_index||''}</span>
+      <span class="s-dim">${r.building||''}${r.floor?' F'+r.floor:''}</span>
+    </div>`).join('');
+  }
+}
+function pauseTicker(){
+  tickerPaused=!tickerPaused;
+  const btn=document.getElementById('ticker-btn');
+  document.getElementById('ticker-pulse').className='live-dot'+(tickerPaused?'':' active');
+  btn.textContent=tickerPaused?'▶ Resume':'⏸ Pause';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  E-COMMERCE CHARTS
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadEcom(){
+  try {
+    const d = await api('/api/ecom/metrics');
+    if(d.error) return;
+    const t = d.totals||{};
+    document.getElementById('ecom-kpis').innerHTML=`
+      <div class="kpi"><div class="kpi-label">Total Orders</div><div class="kpi-val teal">${(+t.total_orders||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Total Revenue</div><div class="kpi-val green">$${(+t.total_revenue||0).toLocaleString(undefined,{maximumFractionDigits:0})}</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Order</div><div class="kpi-val">${'$'+(+t.avg_order_value||0).toFixed(2)}</div></div>
+      <div class="kpi"><div class="kpi-label">Orders/min</div><div class="kpi-val blue">${+t.orders_per_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Bulk Orders</div><div class="kpi-val amber">${(+t.bulk_orders||0).toLocaleString()}</div><div class="kpi-sub">qty &gt; 2</div></div>`;
+
+    const bkts = d.buckets||[];
+    mkChart('ch-ecom-buckets',{type:'doughnut',data:{
+      labels:bkts.map(b=>b.revenue_bucket),
+      datasets:[{data:bkts.map(b=>+b.order_count||0),
+        backgroundColor:['#1A7A4A','#9A6A00','#1A5A9A','#9A2A1A'],borderWidth:2,borderColor:'#fff'}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:11},padding:10}}}}});
+
+    const cats = d.categories||[];
+    mkChart('ch-ecom-cats',{type:'bar',data:{
+      labels:cats.map(c=>c.category),
+      datasets:[{data:cats.map(c=>+c.revenue||0),backgroundColor:'rgba(15,110,90,.8)',borderRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',
+      plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(0,0,0,.05)'}},y:{grid:{display:false}}}}});
+
+    const thru = d.throughput||[];
+    mkChart('ch-ecom-thru',{type:'line',data:{
+      labels:thru.map(r=>r.bucket.slice(11,16)),
+      datasets:[{data:thru.map(r=>r.cnt),borderColor:'#0F6E5A',backgroundColor:'rgba(15,110,90,.1)',tension:.3,fill:true,pointRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    const ctry = d.countries||[];
+    const maxR = Math.max(...ctry.map(c=>+c.revenue||0),1);
+    document.getElementById('ecom-countries').innerHTML = ctry.map(c=>`
+      <div class="mbar-row">
+        <span class="mbar-label">${c.country}</span>
+        <div class="mbar"><div class="mbar-fill" style="width:${Math.round((+c.revenue||0)/maxR*100)}%;background:var(--teal)"></div></div>
+        <span class="mbar-val" style="color:var(--teal)">$${Math.round(+c.revenue||0).toLocaleString()}</span>
+      </div>`).join('');
+  } catch(e){}
+}
+
+async function loadEcomRecent(){
+  try {
+    const rows = await api('/api/ecom/recent');
+    if(!Array.isArray(rows)) return;
+    const bc = {low:'bg',medium:'ba',high:'bb',premium:'br'};
+    document.getElementById('ecom-recent').innerHTML=`
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Order ID</th><th>Time</th><th>Customer</th><th>Category</th><th>Total</th><th>Bucket</th><th>Country</th><th>Bulk</th></tr></thead>
+        <tbody>${rows.map(r=>`<tr>
+          <td><code>${r.order_id||'—'}</code></td>
+          <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">${String(r.timestamp||'').slice(11,19)}</td>
+          <td>${escH(r.customer_name||'')}</td>
+          <td>${r.category||'—'}</td>
+          <td style="font-family:var(--mono);color:var(--green)">$${parseFloat(r.total_price||0).toFixed(2)}</td>
+          <td><span class="badge ${bc[r.revenue_bucket]||'bt'}">${r.revenue_bucket||'—'}</span></td>
+          <td style="color:var(--muted)">${r.country||'—'}</td>
+          <td>${r.is_bulk_order?'<span class="badge bt">✓</span>':'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+  } catch(e){}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  IoT CHARTS
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadIot(){
+  try {
+    const [d, sensors] = await Promise.all([api('/api/iot/metrics'), api('/api/iot/sensors')]);
+    if(d.error) return;
+    const t=d.totals||{};
+    const critClr=(+t.critical_alerts||0)>0?'red':'green';
+    document.getElementById('iot-kpis').innerHTML=`
+      <div class="kpi"><div class="kpi-label">Total Readings</div><div class="kpi-val teal">${(+t.total_readings||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Active Sensors</div><div class="kpi-val blue">${+t.active_sensors||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Readings/min</div><div class="kpi-val green">${+t.readings_per_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Critical Alerts</div><div class="kpi-val ${critClr}">${+t.critical_alerts||0}</div><div class="kpi-sub">level ≥ 2</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Temp</div><div class="kpi-val amber">${t.avg_temp!=null?parseFloat(t.avg_temp).toFixed(1):'—'}°C</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Humidity</div><div class="kpi-val">${t.avg_humidity!=null?parseFloat(t.avg_humidity).toFixed(1):'—'}%</div></div>`;
+
+    const aLbl=['Normal','Warning','Low Battery','Critical'];
+    const aClr=['rgba(26,122,74,.8)','rgba(154,106,0,.8)','rgba(26,90,154,.8)','rgba(154,42,26,.8)'];
+    const alerts=d.alerts||[];
+    mkChart('ch-iot-alerts',{type:'bar',data:{
+      labels:alerts.map(a=>aLbl[a.alert_level]||`L${a.alert_level}`),
+      datasets:[{data:alerts.map(a=>+a.reading_count||0),backgroundColor:alerts.map(a=>aClr[a.alert_level]||aClr[0]),borderRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    const comf=d.comfort||[];
+    const cClr={'comfortable':'#1A7A4A','acceptable':'#9A6A00','uncomfortable':'#9A2A1A'};
+    mkChart('ch-iot-comfort',{type:'doughnut',data:{
+      labels:comf.map(c=>c.comfort_index),
+      datasets:[{data:comf.map(c=>+c.cnt||0),backgroundColor:comf.map(c=>cClr[c.comfort_index]||'#666'),borderWidth:2,borderColor:'#fff'}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:11},padding:10}}}}});
+
+    const bldgs=d.buildings||[];
+    mkChart('ch-iot-bldg',{type:'bar',data:{
+      labels:bldgs.map(b=>b.building),
+      datasets:[{data:bldgs.map(b=>parseFloat(b.avg_temp||0).toFixed(1)),backgroundColor:'rgba(15,110,90,.8)',borderRadius:4}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:false,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    const thru=d.throughput||[];
+    mkChart('ch-iot-thru',{type:'line',data:{
+      labels:thru.map(r=>r.bucket.slice(11,16)),
+      datasets:[{data:thru.map(r=>r.cnt),borderColor:'#1A5A9A',backgroundColor:'rgba(26,90,154,.1)',tension:.3,fill:true,pointRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    if(Array.isArray(sensors) && sensors.length){
+      const aBd=['var(--green)','var(--amber)','var(--blue)','var(--red)'];
+      const bc=b=>b>=80?'var(--green)':b>=40?'var(--amber)':b>=20?'var(--blue)':'var(--red)';
+      document.getElementById('sensors-grid').innerHTML=sensors.map(s=>{
+        const bat=parseFloat(s.avg_battery||0);
+        return `<div class="sensor-card" style="border-top:3px solid ${aBd[s.max_alert||0]}">
+          <div class="sensor-head"><span class="sensor-id">${s.sensor_id||'—'}</span>
+            <span class="badge ${s.max_alert>1?'br':s.max_alert>0?'ba':'bg'}">L${s.max_alert??'?'}</span></div>
+          <div class="sensor-loc">📍 ${s.building||'?'} · Floor ${s.floor||'?'} · ${(+s.reading_count||0).toLocaleString()} readings</div>
+          <div class="sensor-row"><span class="sk">Temperature</span><span class="sv" style="color:var(--amber)">${parseFloat(s.avg_temp||0).toFixed(1)}°C / ${parseFloat(s.avg_temp_f||0).toFixed(1)}°F</span></div>
+          <div class="sensor-row"><span class="sk">Humidity</span><span class="sv">${parseFloat(s.avg_humidity||0).toFixed(1)}%</span></div>
+          <div class="sensor-row"><span class="sk">Battery</span><span class="sv" style="color:${bc(bat)}">${bat.toFixed(0)}%</span></div>
+          <div class="bat-bar"><div class="bat-fill" style="width:${Math.min(100,bat)}%;background:${bc(bat)}"></div></div>
+          <div style="font-size:10px;color:var(--faint);margin-top:6px">Last: ${String(s.last_reading||'').slice(11,19)}</div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e){}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PIPELINE TAB — YAML panels
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadPipeline(){
+  try {
+    const [e, i] = await Promise.all([
+      api('/api/ecom/flowserver_sql'),
+      api('/api/iot/flowserver_sql'),
+    ]);
+    document.getElementById('ecom-yaml-panel').innerHTML = sqlPanel(e.yaml||'', 'ecommerce-orders.yaml', true);
+    document.getElementById('iot-yaml-panel').innerHTML  = sqlPanel(i.yaml||'',  'iot-sensors-csv.yaml',  true);
+  } catch(e){}
+
+  document.getElementById('schema-panel').innerHTML = sqlPanel(`-- E-Commerce Orders
+CREATE TABLE public.ecommerce_orders (
+    order_id        VARCHAR(50) PRIMARY KEY,
+    timestamp       TIMESTAMP NOT NULL,
+    customer_id     VARCHAR(20),
+    customer_name   VARCHAR(100),
+    customer_email  VARCHAR(100),
+    product_id      VARCHAR(20),
+    product_name    VARCHAR(200),
+    category        VARCHAR(50),
+    quantity        INTEGER,
+    unit_price      DECIMAL(10,2),
+    total_price     DECIMAL(10,2),
+    payment_method  VARCHAR(50),
+    country         VARCHAR(50),
+    city            VARCHAR(100),
+    revenue_bucket  VARCHAR(20),    -- ← FlowServer computed
+    is_bulk_order   BOOLEAN,         -- ← FlowServer computed
+    processing_time TIMESTAMP        -- ← FlowServer computed
+) DISTRIBUTED BY (order_id);
+
+-- IoT Sensor Readings
+CREATE TABLE public.iot_sensor_readings (
+    id            SERIAL,
+    timestamp     TIMESTAMP NOT NULL,
+    sensor_id     VARCHAR(20),
+    location      VARCHAR(100),
+    temperature   DECIMAL(5,2),
+    humidity      DECIMAL(5,2),
+    pressure      DECIMAL(6,2),
+    battery_level DECIMAL(5,2),
+    status        VARCHAR(20),
+    alert_level   INTEGER,         -- ← FlowServer computed
+    building      VARCHAR(50),     -- ← FlowServer computed
+    floor         INTEGER,         -- ← FlowServer computed
+    temperature_f DECIMAL(5,2),    -- ← FlowServer computed
+    comfort_index VARCHAR(20),     -- ← FlowServer computed
+    battery_status VARCHAR(20),    -- ← FlowServer computed
+    processed_at  TIMESTAMP,       -- ← FlowServer computed
+    data_quality  VARCHAR(20)      -- ← FlowServer computed
+) DISTRIBUTED BY (sensor_id);`, 'WarehousePG schema — 02_create_tables.sql');
+
+  document.getElementById('fsconf-panel').innerHTML = sqlPanel(`{
+    "Host": "",
+    "Port": 6060,
+    "Gpfdist": {
+        "Host": "",
+        "Port": 6070,
+        "ReuseTables": true
+    },
+    "Prometheus": {
+        "Host": "",
+        "Port": 9080,
+        "MetricsPath": "/flow_metrics"
+    },
+    "DebugPort": 6080,
+    "Logging": {
+        "SplitLogByJob": false,
+        "FrontendLevel": "debug",
+        "BackendLevel": "info"
+    }
+}`, 'configs/flow_server.json');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DB SETUP TAB
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadSetup(){
+  // Full run-order commands block
+  document.getElementById('setup-commands-panel').innerHTML = sqlPanel(
+`# ── 1. Database (run as gpadmin against postgres DB) ──────────────────────
+psql -h localhost -p 5432 -U gpadmin -d postgres \\
+     -f sql/01_create_database.sql
+
+# ── 2. Tables (run against streaming_demo DB) ────────────────────────────────────
+psql -h localhost -p 5432 -U gpadmin -d streaming_demo \\
+     -f sql/02_create_tables.sql
+
+# ── 3. Verify ───────────────────────────────────────────────────────────────
+psql -h localhost -p 5432 -U gpadmin -d streaming_demo \\
+     -f sql/03_verify_setup.sql
+
+# ── 4. Kafka topics ─────────────────────────────────────────────────────────
+kafka-topics --create --topic ecommerce-orders \\
+    --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1 \\
+    --command-config configs/kafka-client.properties
+
+kafka-topics --create --topic iot-sensors-csv \\
+    --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1 \\
+    --command-config configs/kafka-client.properties
+
+# ── 5. Build Go generators ───────────────────────────────────────────────────
+cd generators
+go build -o order-generator order-generator.go
+go build -o iot-generator   iot-generator.go
+cd ..
+
+# ── 6. Submit FlowServer jobs (FlowServer must be running first) ─────────────
+flowcli --host localhost --port 6060 submit jobs/ecommerce-orders.yaml
+flowcli --host localhost --port 6060 submit jobs/iot-sensors-csv.yaml
+
+# ── 7. Start everything ──────────────────────────────────────────────────────
+./scripts/start-demo.sh --ecom-rate 50 --iot-rate 20`,
+    'Full setup — run in order', true);
+
+  // Fetch and render each SQL file from the API
+  try {
+    const [r01, r02, r03] = await Promise.all([
+      api('/api/sql/01_create_database.sql'),
+      api('/api/sql/02_create_tables.sql'),
+      api('/api/sql/03_verify_setup.sql'),
+    ]);
+    document.getElementById('sql-01').innerHTML = sqlPanel(r01.content||'', 'sql/01_create_database.sql', true);
+    document.getElementById('sql-02').innerHTML = sqlPanel(r02.content||'', 'sql/02_create_tables.sql',   true);
+    document.getElementById('sql-03').innerHTML = sqlPanel(r03.content||'', 'sql/03_verify_setup.sql',    false);
+  } catch(e){
+    ['sql-01','sql-02','sql-03'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.innerHTML='<div class="error-box">Could not load SQL file from API</div>';
+    });
+  }
+
+  // Kafka topics commands — with SASL auth
+  document.getElementById('kafka-topics-panel').innerHTML = sqlPanel(
+`# 1. Create configs/kafka-client.properties (git-ignored, never committed)
+# Copy from the template and fill in your credentials:
+cp configs/kafka-client.properties.template configs/kafka-client.properties
+# Then edit the file and set your username and password.
+
+# Or let setup.sh write it for you:
+./scripts/setup.sh --kafka-user kafka --kafka-password YOUR_PASSWORD
+
+# 2. Create topics — always pass --command-config
+kafka-topics --create --topic ecommerce-orders \\
+    --bootstrap-server localhost:9092 \\
+    --partitions 3 --replication-factor 1 \\\\
+    --command-config configs/kafka-client.properties \\
+    --command-config configs/kafka-client.properties
+
+kafka-topics --create --topic iot-sensors-csv \\
+    --bootstrap-server localhost:9092 \\
+    --partitions 3 --replication-factor 1 \\\\
+    --command-config configs/kafka-client.properties \\
+    --command-config configs/kafka-client.properties
+
+# 3. Verify
+kafka-topics --list --bootstrap-server localhost:9092 \\
+    --command-config configs/kafka-client.properties \\
+    | grep -E 'ecommerce|iot'
+
+kafka-topics --describe --topic ecommerce-orders \\
+    --bootstrap-server localhost:9092 \\
+    --command-config configs/kafka-client.properties`,
+    'Kafka topics — SASL auth', true);
+
+  // Build commands
+  document.getElementById('build-panel').innerHTML = sqlPanel(
+`# From the repo root
+cd generators
+
+# Tidy dependencies (first time only)
+go mod tidy
+
+# Build both generators
+go build -o order-generator order-generator.go
+go build -o iot-generator   iot-generator.go
+
+cd ..
+
+# Test — send 10 messages each to verify Kafka connectivity
+./generators/order-generator -rate 5 -max-messages 10
+./generators/iot-generator   -rate 5 -max-messages 10`,
+    'Build Go generators', true);
+
+  // Submit jobs commands
+  document.getElementById('submit-jobs-panel').innerHTML = sqlPanel(
+`# FlowServer must be running before submitting jobs:
+./flowserver -c configs/flow_server.json &
+
+# Submit jobs (registers the YAML with FlowServer — do ONCE per environment)
+flowcli --host localhost --port 6060 submit jobs/ecommerce-orders.yaml
+flowcli --host localhost --port 6060 submit jobs/iot-sensors-csv.yaml
+
+# List all submitted jobs
+flowcli --host localhost --port 6060 list
+
+# After submitting, use the ⚙ Control tab to start/stop jobs from the browser.
+# Or via CLI:
+flowcli --host localhost --port 6060 start ecommerce-orders
+flowcli --host localhost --port 6060 start iot-sensors-csv
+
+# Check job status
+flowcli --host localhost --port 6060 list
+flowcli --host localhost --port 6060 monitor ecommerce-orders`,
+    'FlowServer job submit commands', true);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  POLL LOOP
+// ══════════════════════════════════════════════════════════════════════════════
+let pollCount = 0;
+async function tick(){
+  pollCount++;
+  await loadStatus();
+  await loadTickers();
+  if(pollCount % 3 === 1){
+    await Promise.all([loadEcom(), loadEcomRecent(), loadIot()]);
+  }
+}
+
+(async () => {
+  loadPipeline();
+  loadSetup();
+  await tick();
+  setInterval(tick, 2000);
+})();
+</script>
+</body>
+</html>
+
+

@@ -1,0 +1,80 @@
+# FlowServer job: tu.events.credit_inquiries -> WarehousePG
+#
+# This is the DIRECT STREAMING leg — deliberately NOT sourced via Debezium/
+# CDC. The inquiry API publishes straight to this Kafka topic the moment a
+# lender pulls a report (see streaming/README-streaming.md +
+# streaming/generate_live_inquiry_stream.py, which simulates that API).
+# No OLTP database sits behind this stream at all — that's the point of
+# distinction versus load_credit_accounts.yaml / load_bureau_score_events.yaml,
+# which ARE Debezium/CDC-sourced from EPAS.
+#
+# ClickHouse's Kafka table engine consumes this same topic independently,
+# in parallel — one direct stream, two consumer groups, two tiers.
+#
+# Submit/run:
+#   flowcli submit --name tu_load_credit_inquiries flowserver/load_credit_inquiries.yaml
+#   flowcli start   tu_load_credit_inquiries
+#   flowcli monitor tu_load_credit_inquiries
+
+version: v1.0
+source:
+  kafka:
+    brokers:
+      - 172.31.26.242:9092
+    topic: tu.events.credit_inquiries        # direct-published, not tu.oltp.*
+    read_workers: 0
+    value:
+      json:
+        column:
+          name: raw
+          type: jsonb
+    metadata:
+      json:
+        column:
+          name: kafka_meta
+          type: jsonb
+    control:
+      consistency: exactly-once
+      fallback_offset: earliest
+    properties:
+      group.id: whpg_credit_inquiries_consumer   # distinct from ClickHouse's consumer group on the same topic
+    task:
+      batch_size:
+        interval_ms: 500      # tighter interval — this is the "watch it stream" panel
+        max_count: 5000
+
+target:
+  database:
+    host: localhost
+    port: 5432
+    user: gpadmin
+    password: admin
+    dbname: tu
+    staging_schema: tu_bureau_demo
+    error_limit: 100
+    tables:
+      - table: credit_inquiries
+        schema: tu_bureau_demo
+        mode:
+          insert: {}
+        mapping:
+          inquiry_id: (raw->>'inquiry_id')::bigint
+          consumer_id: (raw->>'consumer_id')::bigint
+          lender_id: (raw->>'lender_id')::int
+          purpose: raw->>'purpose'
+          channel: raw->>'channel'
+          inquiry_ts: (raw->>'inquiry_ts')::timestamp
+          ingested_ts: now()
+
+      - table: lender_feed_landing
+        schema: tu_bureau_demo
+        mode:
+          insert: {}
+        mapping:
+          feed_id: (kafka_meta->>'offset')::bigint
+          lender_id: (raw->>'lender_id')::int
+          source_topic: kafka_meta->>'topic'
+          payload_type: "'inquiry'"
+          feed_channel: "'streaming'"      # direct stream, distinct from 'cdc'
+          event_ts: (raw->>'inquiry_ts')::timestamp
+          ingested_ts: now()

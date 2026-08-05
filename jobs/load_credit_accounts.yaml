@@ -1,0 +1,102 @@
+# FlowServer job: tu.oltp.credit_accounts -> WarehousePG
+# Docs: https://www.enterprisedb.com/docs/supported-open-source/warehousepg/flowserver/
+#
+# Debezium's ExtractNewRecordState ("unwrap") SMT flattens each change event
+# down to the row's current field values as a plain JSON object — so this
+# reads the whole message as one JSONB column, then the target mapping pulls
+# named fields back out with ->> . Same pattern for all three jobs in this
+# folder; only the table/columns/write-mode differ.
+#
+# MERGE/UPSERT (credit_accounts only): the same account_id recurs over time
+# with an updated outstanding_amount/dpd_bucket/status, so this target merges
+# on account_id rather than inserting a new row per change — the dashboard's
+# "Simulate Update" action on the CDC tab exercises exactly this path: an
+# UPDATE on EPAS should land as an in-place row update here, not a new row.
+# bureau_score_events and credit_inquiries stay insert-only (each row there
+# is a new computation/event, not a correction to a prior one) — merge/upsert
+# is intentionally scoped to this one table.
+#
+# Writes to TWO target tables from one batch, on purpose:
+#   1) credit_accounts  — merge/upsert, since the same account_id recurs
+#      with updated outstanding_amount/dpd_bucket/status over time
+#   2) lender_feed_landing — plain insert, the audit/ingestion-throughput
+#      trail Panel 0 (0A/0B/0C) queries against
+#
+# Submit/run:
+#   flowcli submit --name tu_load_credit_accounts flowserver/load_credit_accounts.yaml
+#   flowcli start   tu_load_credit_accounts
+#   flowcli monitor tu_load_credit_accounts
+
+version: v1.0
+source:
+  kafka:
+    brokers:
+      - 172.31.26.242:9092          # e.g. localhost:9092, or the RHEL9 box's IP:9092
+    topic: tu.oltp.credit_accounts
+    read_workers: 0              # 0 = one worker per CPU core
+    value:
+      json:
+        column:
+          name: raw
+          type: jsonb
+    metadata:
+      json:
+        column:
+          name: kafka_meta
+          type: jsonb
+    control:
+      consistency: exactly-once
+      fallback_offset: earliest
+    task:
+      batch_size:
+        interval_ms: 1000
+        max_count: 5000
+
+target:
+  database:
+    host: localhost
+    port: 5432
+    user: gpadmin
+    password: admin
+    dbname: tu
+    staging_schema: tu_bureau_demo
+    error_limit: 100
+    tables:
+      - table: credit_accounts
+        schema: tu_bureau_demo
+        mode:
+          merge:
+            match_columns: [account_id]
+            order_columns: [event_ts]
+            update_columns:
+              - outstanding_amount
+              - dpd_bucket
+              - status
+              - event_ts
+              - ingested_ts
+        mapping:
+          account_id: (raw->>'account_id')::bigint
+          consumer_id: (raw->>'consumer_id')::bigint
+          lender_id: (raw->>'lender_id')::int
+          product: raw->>'product'
+          sanctioned_amount: (raw->>'sanctioned_amount')::numeric
+          outstanding_amount: (raw->>'outstanding_amount')::numeric
+          dpd_bucket: raw->>'dpd_bucket'
+          status: raw->>'status'
+          opened_ts: TO_TIMESTAMP((raw->>'opened_ts')::bigint / 1000.0)
+          event_ts: TO_TIMESTAMP((raw->>'event_ts')::bigint / 1000.0)
+          ingested_ts: now()
+
+      - table: lender_feed_landing
+        schema: tu_bureau_demo
+        mode:
+          insert: {}
+        mapping:
+          feed_id: (kafka_meta->>'offset')::bigint
+          lender_id: (raw->>'lender_id')::int
+          source_topic: kafka_meta->>'topic'
+          payload_type: "'account_update'"
+          feed_channel: "'cdc'"    # Debezium/CDC-sourced from EPAS, distinct from direct-stream 'streaming'
+          event_ts: TO_TIMESTAMP((raw->>'event_ts')::bigint / 1000.0)
+          ingested_ts: now()
+

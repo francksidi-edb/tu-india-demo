@@ -1,0 +1,437 @@
+--- dashboard.html	2026-08-02 15:31:22.529191304 +0000
++++ dashboard.mine.html	2026-08-02 15:40:31.124990749 +0000
+@@ -174,23 +174,12 @@
+ /* ── LOG BOX ── */
+ .log-box{background:#1B1F27;border:1px solid var(--border);border-radius:var(--r);height:180px;overflow-y:auto;font-family:var(--mono);font-size:11px;padding:10px 12px;color:#ABB2BF;white-space:pre-wrap;word-break:break-all}
+ 
+-/* ── SQL EDITOR ── */
+-.sqled-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+-.sqled-textarea{width:100%;min-height:140px;background:#1B1F27;color:#ABB2BF;font-family:var(--mono);font-size:13px;line-height:1.6;border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;resize:vertical;outline:none}
+-.sqled-textarea:focus{border-color:var(--teal)}
+-.sqled-presets{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+-.preset-chip{background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:12px;cursor:pointer;transition:all .15s}
+-.preset-chip:hover{border-color:var(--teal);color:var(--teal);background:var(--teal-bg)}
+-.sqled-meta{font-family:var(--mono);font-size:11px;color:var(--faint);margin:8px 0}
+-.sqled-results{border:1px solid var(--border);border-radius:var(--r);overflow:auto;max-height:420px}
+-
+ /* ── MISC ── */
+ .loading{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:14px 0}
+ .spinner{width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .6s linear infinite}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ .error-box{background:var(--red-bg);border:1px solid var(--red-bd);border-radius:var(--r);padding:11px 14px;font-size:13px;color:var(--red);margin-top:8px}
+ .info-box{background:var(--teal-bg);border:1px solid var(--teal-bd);border-radius:var(--r);padding:9px 14px;font-size:12px;color:var(--teal);margin-bottom:14px}
+-.warn-box{background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);padding:9px 14px;font-size:12px;color:var(--amber);margin-top:8px}
+ .mbar-wrap{display:flex;flex-direction:column;gap:8px}
+ .mbar-row{display:grid;grid-template-columns:100px 1fr 80px;gap:10px;align-items:center;font-size:12px}
+ .mbar-label{color:var(--muted);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@@ -229,14 +218,12 @@
+ 
+ <!-- ── TABS ── -->
+ <div class="tab-bar">
+-  <div class="tab active" id="tab-control"   onclick="switchTab('control')">⚙ Control</div>
+-  <div class="tab"        id="tab-setup"     onclick="switchTab('setup')">🗄 DB Setup</div>
+-  <div class="tab"        id="tab-overview"  onclick="switchTab('overview')">📡 Live Streams</div>
+-  <div class="tab"        id="tab-ecom"      onclick="switchTab('ecom')">🛒 E-Commerce</div>
+-  <div class="tab"        id="tab-iot"       onclick="switchTab('iot')">🌡️ IoT Sensors</div>
+-  <div class="tab"        id="tab-cdc"       onclick="switchTab('cdc')">🔗 CDC Demo</div>
+-  <div class="tab"        id="tab-sqleditor" onclick="switchTab('sqleditor')">🔎 SQL Editor</div>
+-  <div class="tab"        id="tab-pipeline"  onclick="switchTab('pipeline')">📋 Pipeline Config</div>
++  <div class="tab active" id="tab-control"  onclick="switchTab('control')">⚙ Control</div>
++  <div class="tab"        id="tab-setup"    onclick="switchTab('setup')">🗄 DB Setup</div>
++  <div class="tab"        id="tab-overview" onclick="switchTab('overview')">📡 Live Streams</div>
++  <div class="tab"        id="tab-ecom"     onclick="switchTab('ecom')">🛒 E-Commerce</div>
++  <div class="tab"        id="tab-iot"      onclick="switchTab('iot')">🌡️ IoT Sensors</div>
++  <div class="tab"        id="tab-pipeline" onclick="switchTab('pipeline')">📋 Pipeline Config</div>
+ </div>
+ 
+ <div class="page">
+@@ -641,139 +628,6 @@
+ </div><!-- /iot -->
+ 
+ 
+-<!-- ══════════════════════════ CDC DEMO ═══════════════════════════════════════ -->
+-<div class="panel" id="panel-cdc">
+-
+-  <div class="section">
+-    <div class="section-header" style="cursor:default">
+-      <span class="section-num">🔗</span>
+-      <span class="section-title">TU Credit Bureau CDC Pipeline</span>
+-      <span class="section-desc">Postgres EPAS → Debezium → Kafka → FlowServer → WarehousePG</span>
+-    </div>
+-    <div class="section-body open" style="display:block">
+-      <div class="info-box">
+-        This pipeline is change-data-capture, not the synthetic generators above: real row changes on EPAS
+-        (<code>oltp.credit_accounts</code>, <code>oltp.bureau_score_events</code>) are streamed by Debezium into Kafka,
+-        then loaded by FlowServer jobs <code>tu_load_credit_accounts</code> / <code>tu_load_bureau_score_events</code>
+-        into <code>tu_bureau_demo.*</code> on WarehousePG. Those FlowServer jobs are submitted/started from the
+-        FlowServer UI, not from this dashboard — this tab is read-only status.
+-      </div>
+-
+-      <div class="pipeline" id="cdc-pipeline">
+-        <div class="pipe-node"><div class="pipe-label">Source</div><div class="pipe-name" style="color:var(--blue)">EPAS :5444</div></div>
+-        <div class="pipe-arrow" id="cdc-arrow-slot">→</div>
+-        <div class="pipe-node"><div class="pipe-label">CDC</div><div class="pipe-name" style="color:var(--purple)">Debezium</div></div>
+-        <div class="pipe-arrow live">→</div>
+-        <div class="pipe-node"><div class="pipe-label">Message Bus</div><div class="pipe-name" style="color:var(--purple)">Kafka</div></div>
+-        <div class="pipe-arrow" id="cdc-arrow-fs">→</div>
+-        <div class="pipe-node"><div class="pipe-label">Stream Engine</div><div class="pipe-name" style="color:var(--teal)">FlowServer</div></div>
+-        <div class="pipe-arrow" id="cdc-arrow-db">→</div>
+-        <div class="pipe-node"><div class="pipe-label">Target</div><div class="pipe-name" style="color:var(--green)">WarehousePG :5432</div></div>
+-      </div>
+-
+-      <div id="cdc-kpis" class="kpi-row"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+-      <div id="cdc-errors"></div>
+-    </div>
+-  </div>
+-
+-  <div class="section">
+-    <div class="section-header" onclick="toggle(this)">
+-      <span class="section-num">01</span>
+-      <span class="section-title">Replication Slot &amp; Publication</span>
+-      <span class="section-desc">EPAS-side CDC health — debezium_tu_slot / debezium_tu_publication</span>
+-      <span class="chevron open">▼</span>
+-    </div>
+-    <div class="section-body open">
+-      <div id="cdc-slot-detail"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+-    </div>
+-  </div>
+-
+-  <div class="section">
+-    <div class="section-header" onclick="toggle(this)">
+-      <span class="section-num">02</span>
+-      <span class="section-title">Source vs Target Row Counts</span>
+-      <span class="section-desc">oltp.* on EPAS vs tu_bureau_demo.* on WarehousePG</span>
+-      <span class="chevron open">▼</span>
+-    </div>
+-    <div class="section-body open">
+-      <div id="cdc-counts"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+-    </div>
+-  </div>
+-
+-  <div class="section">
+-    <div class="section-header" onclick="toggle(this)">
+-      <span class="section-num">03</span>
+-      <span class="section-title">Live Tickers — WarehousePG target</span>
+-      <span class="section-desc">Latest rows landed via CDC — refreshes every 2s</span>
+-      <span class="chevron open">▼</span>
+-    </div>
+-    <div class="section-body open">
+-      <div class="two-col">
+-        <div>
+-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+-            <span class="live-dot active" style="width:6px;height:6px"></span>credit_accounts
+-          </div>
+-          <div class="stream-box" id="cdc-ca-stream"><span style="color:#5C6370">Waiting…</span></div>
+-        </div>
+-        <div>
+-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+-            <span class="live-dot active" style="width:6px;height:6px"></span>bureau_score_events
+-          </div>
+-          <div class="stream-box" id="cdc-bse-stream"><span style="color:#5C6370">Waiting…</span></div>
+-        </div>
+-      </div>
+-      <div style="margin-top:14px">
+-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+-          <span class="live-dot active" style="width:6px;height:6px"></span>lender_feed_landing — audit trail
+-        </div>
+-        <div class="stream-box" id="cdc-landing-stream"><span style="color:#5C6370">Waiting…</span></div>
+-      </div>
+-    </div>
+-  </div>
+-
+-</div><!-- /cdc -->
+-
+-
+-<!-- ══════════════════════════ SQL EDITOR — validate CDC ══════════════════════ -->
+-<div class="panel" id="panel-sqleditor">
+-
+-  <div class="section">
+-    <div class="section-header" style="cursor:default">
+-      <span class="section-num">🔎</span>
+-      <span class="section-title">SQL Editor</span>
+-      <span class="section-desc">Run ad-hoc queries against EPAS (source, 5444) or WarehousePG (target, 5432) to validate CDC</span>
+-    </div>
+-    <div class="section-body open" style="display:block">
+-
+-      <div class="info-box">
+-        Use this to verify the CDC pipeline end-to-end: check the replication slot / publication on EPAS,
+-        compare row counts between the source (<code>oltp.*</code>) and target (<code>tu_bureau_demo.*</code>) tables,
+-        or spot-check recent rows on either side. Only one statement runs at a time. Data-changing statements
+-        (DROP / DELETE / TRUNCATE / ALTER / UPDATE / INSERT / …) will ask you to confirm before running.
+-      </div>
+-
+-      <div class="sqled-toolbar">
+-        <span class="ctrl-label" style="min-width:auto">Connection</span>
+-        <select id="sqled-conn" onchange="onSqlConnChange()" style="min-width:260px"></select>
+-        <button class="run-btn" onclick="runSqlQuery()">▶ Run Query</button>
+-        <button class="run-btn secondary" onclick="clearSqlEditor()">✕ Clear</button>
+-      </div>
+-
+-      <div class="sqled-presets" id="sqled-presets"></div>
+-
+-      <textarea class="sqled-textarea" id="sqled-sql" spellcheck="false"
+-        placeholder="SELECT slot_name, active, restart_lsn FROM pg_replication_slots;"></textarea>
+-
+-      <div class="sqled-meta" id="sqled-meta"></div>
+-      <div id="sqled-output"></div>
+-      <div id="sqled-results" style="margin-top:12px"></div>
+-
+-    </div>
+-  </div>
+-
+-</div><!-- /sqleditor -->
+-
+-
+ <!-- ══════════════════════════ PIPELINE CONFIG ═════════════════════════════ -->
+ <div class="panel" id="panel-pipeline">
+ 
+@@ -1316,233 +1170,6 @@
+ }
+ 
+ // ══════════════════════════════════════════════════════════════════════════════
+-//  CDC DEMO — TU credit bureau pipeline status
+-// ══════════════════════════════════════════════════════════════════════════════
+-async function loadCdc(){
+-  try {
+-    const [status, recent] = await Promise.all([api('/api/cdc/status'), api('/api/cdc/recent')]);
+-
+-    const epas = status.epas || {};
+-    const whpg = status.whpg || {};
+-    const errs = [];
+-
+-    // ── Pipeline arrows ──────────────────────────────────────────────────────
+-    const slotActive = epas.ok && epas.slot && epas.slot.active === true;
+-    document.getElementById('cdc-arrow-slot').className = 'pipe-arrow'+(slotActive?' live':'');
+-    document.getElementById('cdc-arrow-fs').className   = 'pipe-arrow'+(whpg.ok?' live':'');
+-    const targetFlowing = whpg.ok && (
+-      (whpg.credit_accounts?.count||0) > 0 || (whpg.bureau_score_events?.count||0) > 0
+-    );
+-    document.getElementById('cdc-arrow-db').className = 'pipe-arrow'+(targetFlowing?' live':'');
+-
+-    // ── KPIs ─────────────────────────────────────────────────────────────────
+-    const slotVal = !epas.ok ? '—' : (slotActive ? 'Active' : (epas.slot ? 'Inactive' : 'Missing'));
+-    const slotClr = !epas.ok ? '' : (slotActive ? 'green' : 'red');
+-    const pubVal  = !epas.ok ? '—' : (epas.publication_exists ? 'Present' : 'Missing');
+-    const pubClr  = !epas.ok ? '' : (epas.publication_exists ? 'green' : 'red');
+-
+-    document.getElementById('cdc-kpis').innerHTML = `
+-      <div class="kpi"><div class="kpi-label">Replication Slot</div><div class="kpi-val ${slotClr}">${slotVal}</div></div>
+-      <div class="kpi"><div class="kpi-label">Publication</div><div class="kpi-val ${pubClr}">${pubVal}</div></div>
+-      <div class="kpi"><div class="kpi-label">Source Accounts</div><div class="kpi-val blue">${epas.ok?(epas.credit_accounts||0).toLocaleString():'—'}</div></div>
+-      <div class="kpi"><div class="kpi-label">Target Accounts</div><div class="kpi-val teal">${whpg.ok?(whpg.credit_accounts?.count||0).toLocaleString():'—'}</div></div>
+-      <div class="kpi"><div class="kpi-label">Source Score Events</div><div class="kpi-val blue">${epas.ok?(epas.bureau_score_events||0).toLocaleString():'—'}</div></div>
+-      <div class="kpi"><div class="kpi-label">Target Score Events</div><div class="kpi-val teal">${whpg.ok?(whpg.bureau_score_events?.count||0).toLocaleString():'—'}</div></div>`;
+-
+-    if(!epas.ok) errs.push(`EPAS (source) unreachable: ${epas.error||'unknown error'}`);
+-    if(!whpg.ok) errs.push(`WarehousePG (target) unreachable: ${whpg.error||'unknown error'}`);
+-    document.getElementById('cdc-errors').innerHTML = errs.length
+-      ? errs.map(e=>`<div class="error-box">${escH(e)}</div>`).join('')
+-      : '';
+-
+-    // ── Slot / publication detail ───────────────────────────────────────────
+-    if(epas.ok){
+-      const s = epas.slot;
+-      document.getElementById('cdc-slot-detail').innerHTML = s ? `
+-        <div class="tbl-wrap"><table class="tbl">
+-          <thead><tr><th>Slot</th><th>Active</th><th>Active PID</th><th>Restart LSN</th><th>Confirmed Flush LSN</th><th>Publication</th></tr></thead>
+-          <tbody><tr>
+-            <td><code>${escH(s.slot_name)}</code></td>
+-            <td>${s.active ? '<span class="badge bg">yes</span>' : '<span class="badge br">no</span>'}</td>
+-            <td>${s.active_pid ?? '—'}</td>
+-            <td style="font-family:var(--mono);font-size:12px">${escH(s.restart_lsn||'—')}</td>
+-            <td style="font-family:var(--mono);font-size:12px">${escH(s.confirmed_flush_lsn||'—')}</td>
+-            <td>${epas.publication_exists ? '<span class="badge bg">present</span>' : '<span class="badge br">missing</span>'}</td>
+-          </tr></tbody>
+-        </table></div>` :
+-        `<div class="warn-box">Slot <code>debezium_tu_slot</code> does not exist — Debezium has not started streaming (or the connector is down / never connected).</div>`;
+-    } else {
+-      document.getElementById('cdc-slot-detail').innerHTML = `<div class="error-box">Could not query EPAS: ${escH(epas.error||'')}</div>`;
+-    }
+-
+-    // ── Source vs target counts ─────────────────────────────────────────────
+-    if(epas.ok || whpg.ok){
+-      const rows = [
+-        {label:'credit_accounts',     src: epas.ok?epas.credit_accounts:null,      tgt: whpg.ok?whpg.credit_accounts?.count:null,      latest: whpg.ok?whpg.credit_accounts?.latest:''},
+-        {label:'bureau_score_events', src: epas.ok?epas.bureau_score_events:null,  tgt: whpg.ok?whpg.bureau_score_events?.count:null,  latest: whpg.ok?whpg.bureau_score_events?.latest:''},
+-        {label:'lender_feed_landing (audit)', src: null, tgt: whpg.ok?whpg.lender_feed_landing?.count:null, latest: whpg.ok?whpg.lender_feed_landing?.latest:''},
+-      ];
+-      document.getElementById('cdc-counts').innerHTML = `
+-        <div class="tbl-wrap"><table class="tbl">
+-          <thead><tr><th>Table</th><th>Source (EPAS)</th><th>Target (WarehousePG)</th><th>Delta</th><th>Latest in target</th></tr></thead>
+-          <tbody>${rows.map(r=>{
+-            const delta = (r.src!=null && r.tgt!=null) ? (r.tgt - r.src) : null;
+-            const deltaHtml = delta==null ? '—' : (delta===0
+-              ? '<span class="badge bg">in sync</span>'
+-              : `<span class="badge ${delta>0?'bb':'ba'}">${delta>0?'+':''}${delta}</span>`);
+-            return `<tr>
+-              <td><code>${escH(r.label)}</code></td>
+-              <td style="font-family:var(--mono)">${r.src==null?'—':r.src.toLocaleString()}</td>
+-              <td style="font-family:var(--mono)">${r.tgt==null?'—':r.tgt.toLocaleString()}</td>
+-              <td>${deltaHtml}</td>
+-              <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">${String(r.latest||'').slice(0,19)||'—'}</td>
+-            </tr>`;
+-          }).join('')}</tbody>
+-        </table></div>`;
+-    } else {
+-      document.getElementById('cdc-counts').innerHTML = `<div class="error-box">Neither EPAS nor WarehousePG reachable — cannot compare row counts.</div>`;
+-    }
+-
+-    // ── Live tickers ─────────────────────────────────────────────────────────
+-    const ca = recent.credit_accounts || [];
+-    document.getElementById('cdc-ca-stream').innerHTML = ca.length ? ca.map(r=>`<div class="stream-row">
+-      <span class="s-ts">${String(r.ingested_ts||'').slice(11,19)}</span>
+-      <span class="s-id">${r.account_id??'—'}</span>
+-      <span class="s-val">$${parseFloat(r.outstanding_amount||0).toFixed(0)}</span>
+-      <span class="s-tag">${r.dpd_bucket||'—'}</span>
+-      <span class="s-dim">${r.product||''} · ${r.status||''} · lender ${r.lender_id??''}</span>
+-    </div>`).join('') : `<span style="color:#5C6370">${recent.credit_accounts_error ? escH(recent.credit_accounts_error) : 'No rows yet'}</span>`;
+-
+-    const bse = recent.bureau_score_events || [];
+-    document.getElementById('cdc-bse-stream').innerHTML = bse.length ? bse.map(r=>`<div class="stream-row">
+-      <span class="s-ts">${String(r.score_ts||r.ingested_ts||'').slice(11,19)}</span>
+-      <span class="s-id">${r.consumer_id??'—'}</span>
+-      <span class="s-val">${r.score_value??'—'}</span>
+-      <span class="s-tag">${r.score_trigger||''}</span>
+-      <span class="s-dim">v${r.score_version??''}</span>
+-    </div>`).join('') : `<span style="color:#5C6370">${recent.bureau_score_events_error ? escH(recent.bureau_score_events_error) : 'No rows yet'}</span>`;
+-
+-    const landing = recent.lender_feed_landing || [];
+-    document.getElementById('cdc-landing-stream').innerHTML = landing.length ? landing.map(r=>`<div class="stream-row">
+-      <span class="s-ts">${String(r.ingested_ts||'').slice(11,19)}</span>
+-      <span class="s-id">feed ${r.feed_id??'—'}</span>
+-      <span class="s-tag">${r.payload_type||''}</span>
+-      <span class="s-dim">${r.feed_channel||''} · ${r.source_topic||''} · lender ${r.lender_id??''}</span>
+-    </div>`).join('') : `<span style="color:#5C6370">${recent.lender_feed_landing_error ? escH(recent.lender_feed_landing_error) : 'No rows yet'}</span>`;
+-
+-  } catch(e){
+-    document.getElementById('cdc-errors').innerHTML = `<div class="error-box">CDC status request failed: ${escH(e.message||e)}</div>`;
+-  }
+-}
+-
+-// ══════════════════════════════════════════════════════════════════════════════
+-//  SQL EDITOR — validate CDC (EPAS source <-> WarehousePG target)
+-// ══════════════════════════════════════════════════════════════════════════════
+-let sqlConnections = [];
+-let sqlPresets = {};
+-
+-async function loadSqlEditor(){
+-  try {
+-    const [conns, presets] = await Promise.all([
+-      api('/api/sqleditor/connections'),
+-      api('/api/sqleditor/presets'),
+-    ]);
+-    sqlConnections = Array.isArray(conns) ? conns : [];
+-    sqlPresets = presets || {};
+-
+-    const sel = document.getElementById('sqled-conn');
+-    sel.innerHTML = sqlConnections.map(c =>
+-      `<option value="${c.id}">${escH(c.label)} — ${escH(c.database)}</option>`
+-    ).join('');
+-
+-    renderSqlPresetChips();
+-  } catch(e){
+-    document.getElementById('sqled-output').innerHTML =
+-      `<div class="error-box">Could not load SQL Editor connections: ${escH(e.message||e)}</div>`;
+-  }
+-}
+-
+-function renderSqlPresetChips(){
+-  const connId = document.getElementById('sqled-conn').value;
+-  const list = sqlPresets[connId] || [];
+-  document.getElementById('sqled-presets').innerHTML = list.map((p, i) =>
+-    `<span class="preset-chip" onclick="useSqlPreset(${i})">${escH(p.name)}</span>`
+-  ).join('');
+-}
+-
+-function onSqlConnChange(){
+-  renderSqlPresetChips();
+-}
+-
+-function useSqlPreset(i){
+-  const connId = document.getElementById('sqled-conn').value;
+-  const list = sqlPresets[connId] || [];
+-  const preset = list[i];
+-  if(preset) document.getElementById('sqled-sql').value = preset.sql;
+-}
+-
+-function clearSqlEditor(){
+-  document.getElementById('sqled-sql').value = '';
+-  document.getElementById('sqled-meta').textContent = '';
+-  document.getElementById('sqled-output').innerHTML = '';
+-  document.getElementById('sqled-results').innerHTML = '';
+-}
+-
+-async function runSqlQuery(confirmDestructive=false){
+-  const connId = document.getElementById('sqled-conn').value;
+-  const sql = document.getElementById('sqled-sql').value.trim();
+-  const metaEl = document.getElementById('sqled-meta');
+-  const outEl  = document.getElementById('sqled-output');
+-  const resEl  = document.getElementById('sqled-results');
+-
+-  if(!sql){
+-    outEl.innerHTML = '<div class="error-box">Enter a SQL statement first.</div>';
+-    return;
+-  }
+-
+-  metaEl.textContent = 'Running…';
+-  outEl.innerHTML = '';
+-  resEl.innerHTML = '<div class="loading"><div class="spinner"></div>Running query…</div>';
+-
+-  const d = await api('/api/sqleditor/query', {
+-    method: 'POST',
+-    headers: {'Content-Type':'application/json'},
+-    body: JSON.stringify({conn: connId, sql, confirm: confirmDestructive}),
+-  });
+-
+-  if(!d.ok && d.needs_confirm){
+-    resEl.innerHTML = '';
+-    metaEl.textContent = '';
+-    if(confirm(d.error + '\n\nRun it anyway?')){
+-      return runSqlQuery(true);
+-    } else {
+-      outEl.innerHTML = `<div class="warn-box">Cancelled — query not run.</div>`;
+-    }
+-    return;
+-  }
+-
+-  if(!d.ok){
+-    metaEl.textContent = '';
+-    resEl.innerHTML = '';
+-    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Query failed')}</div>`;
+-    return;
+-  }
+-
+-  outEl.innerHTML = '';
+-
+-  if(d.columns && d.columns.length){
+-    metaEl.textContent = `${d.row_count} row${d.row_count===1?'':'s'}${d.truncated?' (truncated to 500)':''} · ${d.elapsed}s`;
+-    resEl.innerHTML = `<div class="sqled-results"><table class="tbl">
+-      <thead><tr>${d.columns.map(c=>`<th>${escH(c)}</th>`).join('')}</tr></thead>
+-      <tbody>${d.rows.map(r=>`<tr>${r.map(v=>`<td>${v===null?'<span style="color:var(--faint)">null</span>':escH(v)}</td>`).join('')}</tr>`).join('')}</tbody>
+-    </table></div>`;
+-  } else {
+-    metaEl.textContent = `${d.affected ?? 0} row(s) affected · ${d.elapsed}s`;
+-    resEl.innerHTML = `<div class="output-msg ok">✓ Statement executed successfully</div>`;
+-  }
+-}
+-
+-// ══════════════════════════════════════════════════════════════════════════════
+ //  PIPELINE TAB — YAML panels
+ // ══════════════════════════════════════════════════════════════════════════════
+ async function loadPipeline(){
+@@ -1761,14 +1388,13 @@
+   await loadStatus();
+   await loadTickers();
+   if(pollCount % 3 === 1){
+-    await Promise.all([loadEcom(), loadEcomRecent(), loadIot(), loadCdc()]);
++    await Promise.all([loadEcom(), loadEcomRecent(), loadIot()]);
+   }
+ }
+ 
+ (async () => {
+   loadPipeline();
+   loadSetup();
+-  loadSqlEditor();
+   await tick();
+   setInterval(tick, 2000);
+ })();

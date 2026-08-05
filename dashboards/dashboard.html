@@ -1,0 +1,2920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FlowServer — Real Streaming Demo</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F4F3EF;--surface:#FFF;--surface2:#EEEDEA;--border:#DDDBD5;--border2:#C8C5BD;
+  --text:#1A1A18;--muted:#6B6860;--faint:#9B9890;
+  --green:#1A7A4A;--green-bg:#EBF5EF;--green-bd:#B8DFC8;
+  --blue:#1A5A9A;--blue-bg:#EBF0F9;--blue-bd:#A0C0E0;
+  --amber:#9A6A00;--amber-bg:#FDF6E3;--amber-bd:#E0C060;
+  --red:#9A2A1A;--red-bg:#FCECEA;--red-bd:#E0A090;
+  --teal:#0F6E5A;--teal-bg:#E8F5F2;--teal-bd:#A8D8CE;
+  --purple:#5A3A9A;--purple-bg:#F0EBF9;--purple-bd:#C0A8E0;
+  --mono:'IBM Plex Mono',monospace;
+  --sans:'IBM Plex Sans',sans-serif;
+  --r:6px;--rl:10px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.6}
+
+/* ── HEADER ── */
+.site-header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 2rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.brand{font-weight:600;font-size:15px;display:flex;align-items:center;gap:10px}
+.brand-fs{color:var(--teal)}.brand-x{color:var(--border)}.brand-wpg{color:var(--blue)}
+.header-right{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#ccc;flex-shrink:0}
+.status-dot.ok{background:var(--green);box-shadow:0 0 5px rgba(26,122,74,.4)}
+.status-dot.err{background:var(--red)}
+.ext-badge{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-family:var(--mono);font-size:11px}
+.badge-teal{background:var(--teal-bg);border-color:var(--teal-bd);color:var(--teal)}
+.badge-blue{background:var(--blue-bg);border-color:var(--blue-bd);color:var(--blue)}
+.badge-green{background:var(--green-bg);border-color:var(--green-bd);color:var(--green)}
+
+/* ── TABS ── */
+.tab-bar{background:var(--surface);border-bottom:2px solid var(--border);padding:0 2rem;display:flex;gap:0;overflow-x:auto}
+.tab{padding:12px 18px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap;transition:color .15s,border-color .15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--teal);border-bottom-color:var(--teal)}
+
+/* ── LAYOUT ── */
+.page{max-width:1280px;margin:0 auto;padding:2rem}
+.panel{display:none}.panel.active{display:block}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);margin-bottom:1.5rem;overflow:hidden}
+.section-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;transition:background .1s}
+.section-header:hover{background:var(--surface2)}
+.section-num{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:30px}
+.section-title{font-weight:600;font-size:14px;flex:1}
+.section-desc{font-size:12px;color:var(--muted);max-width:460px}
+.section-body{padding:20px;display:none}
+.section-body.open{display:block}
+.chevron{color:var(--faint);font-size:12px;transition:transform .2s}
+.chevron.open{transform:rotate(180deg)}
+
+/* ── KPIs ── */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--surface2);border-radius:var(--r);padding:13px 15px}
+.kpi-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.kpi-val{font-family:var(--mono);font-size:21px;font-weight:500;line-height:1.1}
+.kpi-val.green{color:var(--green)}.kpi-val.blue{color:var(--blue)}.kpi-val.teal{color:var(--teal)}
+.kpi-val.amber{color:var(--amber)}.kpi-val.red{color:var(--red)}
+.kpi-sub{font-size:11px;color:var(--faint);margin-top:2px}
+
+/* ── TABLE ── */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;padding:7px 10px;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--surface2)}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r)}
+code{font-family:var(--mono);font-size:12px;background:var(--surface2);padding:2px 5px;border-radius:3px;color:var(--teal)}
+
+/* ── BADGES ── */
+.badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:3px;font-weight:500}
+.bg{background:var(--green-bg);color:var(--green)}.bb{background:var(--blue-bg);color:var(--blue)}
+.ba{background:var(--amber-bg);color:var(--amber)}.bt{background:var(--teal-bg);color:var(--teal)}
+.br{background:var(--red-bg);color:var(--red)}.bp{background:var(--purple-bg);color:var(--purple)}
+
+/* ── CONTROL PANEL ── */
+.ctrl-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px}
+.ctrl-card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.ctrl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.ctrl-row:last-child{margin-bottom:0}
+.ctrl-label{font-size:12px;color:var(--muted);white-space:nowrap;min-width:80px}
+.run-btn{background:var(--teal);color:#fff;border:none;padding:6px 14px;border-radius:var(--r);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;transition:opacity .15s;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.run-btn:hover{opacity:.85}
+.run-btn:disabled{opacity:.5;cursor:not-allowed}
+.run-btn.secondary{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+.run-btn.secondary:hover{background:var(--surface2)}
+.run-btn.danger{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+.run-btn.danger:hover{background:#f7d8d5}
+.run-btn.success{background:var(--green-bg);color:var(--green);border:1px solid var(--green-bd)}
+select,input[type=number]{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--sans);font-size:13px;padding:5px 9px;border-radius:var(--r);outline:none}
+select:focus,input:focus{border-color:var(--teal)}
+
+/* ── STATUS INDICATORS ── */
+.proc-status{display:flex;align-items:center;gap:6px;font-size:13px;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+.proc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.proc-dot.running{background:var(--green);box-shadow:0 0 5px rgba(26,122,74,.4)}
+.proc-dot.stopped{background:var(--red)}
+.proc-dot.unknown{background:var(--faint)}
+.proc-name{font-family:var(--mono);font-size:12px;font-weight:500;flex:1}
+.proc-pid{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+@media(max-width:700px){.status-grid{grid-template-columns:1fr}}
+
+/* ── LIVE PULSE ── */
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.live-dot.active{background:var(--green);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(1.2)}}
+
+/* ── SQL PANEL ── */
+.sql-panel{border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-top:14px}
+.sql-panel-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--surface2);border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.sql-panel-header:hover{background:#E5E4DF}
+.sql-label{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--teal);display:flex;align-items:center;gap:6px}
+.sql-label::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--teal);display:inline-block}
+.sql-toggle-hint{font-size:11px;color:var(--faint)}
+.sql-body{display:none;background:#1B1F27}
+.sql-body.open{display:block}
+.sql-pre{margin:0;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.85;color:#ABB2BF;overflow-x:auto;white-space:pre;max-height:420px;overflow-y:auto}
+.sql-footer{display:flex;justify-content:flex-end;padding:7px 14px;background:#161A22;border-top:1px solid #2A2F3A}
+.copy-btn{background:#2A2F3A;border:1px solid #3A4050;color:#8A95A8;font-family:var(--mono);font-size:11px;padding:4px 12px;border-radius:4px;cursor:pointer;transition:all .15s}
+.copy-btn:hover{background:#3A4050;color:#ABB2BF}
+.copy-btn.copied{color:#4EC9A0;border-color:#4EC9A0}
+.s-kw{color:#C678DD}.s-fn{color:#61AFEF}.s-str{color:#98C379}
+.s-cm{color:#5C6370;font-style:italic}.s-num{color:#D19A66}.s-yaml-key{color:#E5C07B}
+
+/* ── STREAM TICKER ── */
+.stream-box{background:#1B1F27;border:1px solid var(--border);border-radius:var(--r);height:210px;overflow-y:auto;font-family:var(--mono);font-size:11px;padding:10px 12px}
+.stream-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);line-height:1.5;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.s-ts{color:#5C6370;min-width:86px;flex-shrink:0}
+.s-id{color:#56B6C2;min-width:80px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.s-val{color:#98C379;min-width:75px;flex-shrink:0}
+.s-tag{min-width:70px;flex-shrink:0}
+.s-tag.low{color:#98C379}.s-tag.medium{color:#D19A66}.s-tag.high{color:#E5C07B}.s-tag.premium{color:#E06C75}
+.s-tag.normal{color:#98C379}.s-tag.high_temp,.s-tag.low_temp{color:#E06C75}
+.s-tag.high_humidity{color:#61AFEF}.s-tag.low_battery{color:#D19A66}
+.s-dim{color:#5C6370}
+
+/* ── CHARTS ── */
+.chart-wrap{position:relative;height:200px}
+.chart-wrap.tall{height:250px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:860px){.two-col{grid-template-columns:1fr}}
+.chart-label{font-size:12px;color:var(--muted);margin-bottom:10px}
+
+/* ── SENSOR CARDS ── */
+.sensors-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.sensor-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:13px}
+.sensor-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.sensor-id{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--teal)}
+.sensor-loc{font-size:11px;color:var(--muted);margin-bottom:8px}
+.sensor-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+.sk{color:var(--muted)}.sv{font-family:var(--mono);font-weight:500}
+.bat-bar{height:4px;border-radius:2px;background:var(--border);margin-top:8px;overflow:hidden}
+.bat-fill{height:100%;border-radius:2px;transition:width .6s}
+
+/* ── PIPELINE ── */
+.pipeline{display:flex;align-items:center;overflow-x:auto;padding:12px 0 14px;gap:0}
+.pipe-node{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:9px 14px;text-align:center;min-width:100px;flex-shrink:0}
+.pipe-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.pipe-name{font-size:13px;font-weight:600}
+.pipe-arrow{color:var(--border2);font-size:18px;padding:0 5px;flex-shrink:0;transition:color .4s}
+.pipe-arrow.live{color:var(--teal)}
+
+/* ── LOG BOX ── */
+.log-box{background:#1B1F27;border:1px solid var(--border);border-radius:var(--r);height:180px;overflow-y:auto;font-family:var(--mono);font-size:11px;padding:10px 12px;color:#ABB2BF;white-space:pre-wrap;word-break:break-all}
+
+/* ── SQL EDITOR ── */
+.sqled-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.sqled-textarea{width:100%;min-height:140px;background:#1B1F27;color:#ABB2BF;font-family:var(--mono);font-size:13px;line-height:1.6;border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;resize:vertical;outline:none}
+.sqled-textarea:focus{border-color:var(--teal)}
+.sqled-presets{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.preset-chip{background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:12px;cursor:pointer;transition:all .15s}
+.preset-chip:hover{border-color:var(--teal);color:var(--teal);background:var(--teal-bg)}
+.sqled-meta{font-family:var(--mono);font-size:11px;color:var(--faint);margin:8px 0}
+.sqled-results{border:1px solid var(--border);border-radius:var(--r);overflow:auto;max-height:420px}
+
+/* ── MISC ── */
+.loading{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:14px 0}
+.spinner{width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-box{background:var(--red-bg);border:1px solid var(--red-bd);border-radius:var(--r);padding:11px 14px;font-size:13px;color:var(--red);margin-top:8px}
+.info-box{background:var(--teal-bg);border:1px solid var(--teal-bd);border-radius:var(--r);padding:9px 14px;font-size:12px;color:var(--teal);margin-bottom:14px}
+.warn-box{background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);padding:9px 14px;font-size:12px;color:var(--amber);margin-top:8px}
+.mbar-wrap{display:flex;flex-direction:column;gap:8px}
+.mbar-row{display:grid;grid-template-columns:100px 1fr 80px;gap:10px;align-items:center;font-size:12px}
+.mbar-label{color:var(--muted);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mbar{height:7px;border-radius:4px;background:var(--surface2);border:1px solid var(--border)}
+.mbar-fill{height:100%;border-radius:4px;transition:width .6s}
+.mbar-val{font-family:var(--mono);font-size:12px;text-align:right}
+.output-msg{font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:var(--r);margin-top:8px}
+.output-msg.ok{background:var(--green-bg);color:var(--green);border:1px solid var(--green-bd)}
+.output-msg.err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header class="site-header">
+  <div class="brand">
+    <img src="favicon.svg" style="width:32px;height:32px;flex-shrink:0" alt="logo">
+    <span style="color:var(--border);font-weight:300;margin:0 2px">|</span>
+    <span class="brand-fs">FlowServer</span>
+    <span class="brand-x">×</span>
+    <span class="brand-wpg">WarehousePG</span>
+    <span style="color:var(--border);font-weight:300">|</span>
+    <span style="font-weight:400;font-size:13px;color:var(--muted)">Real Streaming Demo</span>
+  </div>
+  <div class="header-right">
+    <div class="live-dot" id="live-dot"></div>
+    <span id="live-label" style="font-size:12px">connecting…</span>
+    <div style="width:1px;height:18px;background:var(--border)"></div>
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text" style="color:var(--muted);font-size:12px">—</span>
+    <span class="ext-badge badge-teal" id="ecom-badge">— orders</span>
+    <span class="ext-badge badge-blue" id="iot-badge">— readings</span>
+    <span id="refresh-ts" style="font-family:var(--mono);font-size:10px;color:var(--faint)"></span>
+  </div>
+</header>
+
+<!-- ── TABS ── -->
+<div class="tab-bar">
+  <div class="tab active" id="tab-control"   onclick="switchTab('control')">⚙ Control</div>
+  <div class="tab"        id="tab-setup"     onclick="switchTab('setup')">🗄 DB Setup</div>
+  <div class="tab"        id="tab-overview"  onclick="switchTab('overview')">📡 Live Streams</div>
+  <div class="tab"        id="tab-ecom"      onclick="switchTab('ecom')">🛒 E-Commerce</div>
+  <div class="tab"        id="tab-iot"       onclick="switchTab('iot')">🌡️ IoT Sensors</div>
+  <div class="tab"        id="tab-cdc"       onclick="switchTab('cdc')">🔗 CDC Demo</div>
+  <div class="tab"        id="tab-sqleditor" onclick="switchTab('sqleditor')">🔎 SQL Editor</div>
+  <div class="tab"        id="tab-madlib"    onclick="switchTab('madlib')">🧠 Credit Risk</div>
+  <div class="tab"        id="tab-pxf"       onclick="switchTab('pxf')">📈 PXF</div>
+  <div class="tab"        id="tab-pipeline"  onclick="switchTab('pipeline')">📋 Pipeline Config</div>
+</div>
+
+<div class="page">
+
+<!-- ══════════════════════════ DB SETUP ════════════════════════════════════ -->
+<div class="panel" id="panel-setup">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">00</span>
+      <span class="section-title">One-Time Setup — Run Order</span>
+      <span class="section-desc">Copy-paste these commands in sequence before starting the demo</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">Run these steps once per environment. After completing setup, go to <b>⚙ Control</b> to start FlowServer, submit jobs, and launch generators.</div>
+      <div id="setup-commands-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Create Database — <code>01_create_database.sql</code></span>
+      <span class="section-desc">Drops and recreates the <code>streaming_demo</code> database</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:12px">psql -h localhost -p 5432 -U gpadmin -d postgres -f sql/01_create_database.sql</div>
+      <div id="sql-01"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Create Tables — <code>02_create_tables.sql</code></span>
+      <span class="section-desc">Creates <code>ecommerce_orders</code> and <code>iot_sensor_readings</code> with all indexes</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:12px">psql -h localhost -p 5432 -U gpadmin -d streaming_demo -f sql/02_create_tables.sql</div>
+      <div id="sql-02"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Verify Setup — <code>03_verify_setup.sql</code></span>
+      <span class="section-desc">Checks tables exist, shows row counts and sample data</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:12px">psql -h localhost -p 5432 -U gpadmin -d streaming_demo -f sql/03_verify_setup.sql</div>
+      <div id="sql-03"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">04</span>
+      <span class="section-title">Create Kafka Topics</span>
+      <span class="section-desc">Two topics — JSON for orders, CSV for IoT sensors</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="kafka-topics-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">05</span>
+      <span class="section-title">Build Go Generators</span>
+      <span class="section-desc">Compile the data generators once before first run</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="build-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">06</span>
+      <span class="section-title">Submit FlowServer Jobs</span>
+      <span class="section-desc">Register jobs once — then use ⚙ Control tab to start/stop them</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="submit-jobs-panel"></div>
+    </div>
+  </div>
+
+</div><!-- /setup -->
+
+
+<!-- ══════════════════════════ CONTROL PANEL ═══════════════════════════════ -->
+<div class="panel active" id="panel-control">
+
+  <!-- Start All / Stop All -->
+  <div class="section">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">⚡</span>
+      <span class="section-title">Quick Actions</span>
+      <span class="section-desc">Start or stop the entire pipeline in one click</span>
+    </div>
+    <div class="section-body open" style="display:block">
+      <div class="ctrl-row" style="gap:12px">
+        <button class="run-btn" style="font-size:15px;padding:10px 28px" onclick="startAll()">▶ Start All</button>
+        <button class="run-btn danger" style="font-size:15px;padding:10px 28px" onclick="stopAll()">■ Stop All</button>
+        <button class="run-btn secondary" style="font-size:15px;padding:10px 28px;border-color:var(--amber);color:var(--amber)" onclick="resetAll()">↺ Reset &amp; Restart</button>
+        <span style="color:var(--muted);font-size:12px;margin-left:4px">FlowServer · Jobs · Generators</span>
+      </div>
+      <div id="all-output" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- Pipeline overview -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Pipeline Status</span>
+      <span class="section-desc">Live status of every component</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="pipeline" id="ctrl-pipeline">
+        <div class="pipe-node"><div class="pipe-label">Generators</div><div class="pipe-name" style="color:var(--blue)" id="pp-gen">Go</div></div>
+        <div class="pipe-arrow live">→</div>
+        <div class="pipe-node"><div class="pipe-label">Message Bus</div><div class="pipe-name" style="color:var(--purple)">Kafka</div></div>
+        <div class="pipe-arrow" id="pp-arrow-fs">→</div>
+        <div class="pipe-node"><div class="pipe-label">Stream Engine</div><div class="pipe-name" style="color:var(--teal)" id="pp-fs">FlowServer</div></div>
+        <div class="pipe-arrow" id="pp-arrow-db">→</div>
+        <div class="pipe-node"><div class="pipe-label">Warehouse</div><div class="pipe-name" style="color:var(--green)">WarehousePG</div></div>
+      </div>
+
+      <div class="status-grid" id="status-grid">
+        <div class="loading"><div class="spinner"></div>Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FlowServer control -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">FS</span>
+      <span class="section-title">FlowServer Process</span>
+      <span class="section-desc">Start / stop ./flowserver -c configs/flow_server.json</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">FlowServer daemon</div>
+        <div class="ctrl-row">
+          <button class="run-btn" onclick="fsStart()">▶ Start FlowServer</button>
+          <button class="run-btn danger" onclick="fsStop()">■ Stop FlowServer</button>
+          <button class="run-btn secondary" onclick="loadFsLog()">📋 Show Log</button>
+        </div>
+        <div id="fs-output"></div>
+        <div id="fs-log" style="display:none;margin-top:10px">
+          <div class="log-box" id="fs-log-box"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FlowServer jobs -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">JOBS</span>
+      <span class="section-title">FlowServer Jobs</span>
+      <span class="section-desc">Submit, start, stop individual jobs</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="jobs-status" class="status-grid" style="margin-bottom:14px">
+        <div class="loading"><div class="spinner"></div>Loading…</div>
+      </div>
+
+      <!-- ecommerce-orders -->
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">
+          <span class="live-dot" id="job-dot-ecom"></span>
+          ecommerce-orders  <span style="color:var(--faint);font-weight:400;font-size:11px">jobs/ecommerce-orders.yaml</span>
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn secondary" onclick="jobSubmit('ecommerce-orders')">📤 Submit</button>
+          <button class="run-btn" onclick="jobStart('ecommerce-orders')">▶ Start</button>
+          <button class="run-btn danger" onclick="jobStop('ecommerce-orders')">■ Stop</button>
+          <button class="run-btn secondary" onclick="jobRestart('ecommerce-orders')">↺ Restart</button>
+        </div>
+        <div id="job-output-ecom"></div>
+      </div>
+
+      <!-- iot-sensors-csv -->
+      <div class="ctrl-card" style="margin-top:10px">
+        <div class="ctrl-card-title">
+          <span class="live-dot" id="job-dot-iot"></span>
+          iot-sensors-csv  <span style="color:var(--faint);font-weight:400;font-size:11px">jobs/iot-sensors-csv.yaml</span>
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn secondary" onclick="jobSubmit('iot-sensors-csv')">📤 Submit</button>
+          <button class="run-btn" onclick="jobStart('iot-sensors-csv')">▶ Start</button>
+          <button class="run-btn danger" onclick="jobStop('iot-sensors-csv')">■ Stop</button>
+          <button class="run-btn secondary" onclick="jobRestart('iot-sensors-csv')">↺ Restart</button>
+        </div>
+        <div id="job-output-iot"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generators -->
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">GEN</span>
+      <span class="section-title">Data Generators</span>
+      <span class="section-desc">Push synthetic data into Kafka topics</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">Rate Configuration</div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">E-Com rate</span>
+          <input type="number" id="gen-ecom-rate" value="50" min="1" max="1000" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">orders/sec</span>
+          <span class="ctrl-label" style="margin-left:16px">IoT rate</span>
+          <input type="number" id="gen-iot-rate" value="20" min="1" max="1000" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">readings/sec</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">E-Com max</span>
+          <input type="number" id="gen-ecom-total" value="0" min="0" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">0 = unlimited</span>
+          <span class="ctrl-label" style="margin-left:16px">IoT max</span>
+          <input type="number" id="gen-iot-total" value="0" min="0" style="width:80px">
+          <span style="font-size:12px;color:var(--muted)">0 = unlimited</span>
+        </div>
+        <div class="ctrl-row" style="margin-top:4px">
+          <button class="run-btn" onclick="genStart('both')">▶ Start Both</button>
+          <button class="run-btn secondary" onclick="genStart('ecom')">▶ E-Com only</button>
+          <button class="run-btn secondary" onclick="genStart('iot')">▶ IoT only</button>
+          <button class="run-btn danger" onclick="genStop('both')">■ Stop Both</button>
+          <button class="run-btn danger" style="margin-left:0" onclick="genStop('ecom')">■ E-Com</button>
+          <button class="run-btn danger" style="margin-left:0" onclick="genStop('iot')">■ IoT</button>
+        </div>
+        <div id="gen-output"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /control -->
+
+
+<!-- ══════════════════════════ LIVE STREAMS ════════════════════════════════ -->
+<div class="panel" id="panel-overview">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Ingestion Counters</span>
+      <span class="section-desc">Total rows and last-minute throughput</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="kpi-row" id="ov-kpis">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Live Event Tickers</span>
+      <span class="section-desc">Latest rows landing in WarehousePG — refreshes every 2s</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-row" style="margin-bottom:12px">
+        <div class="live-dot active" id="ticker-pulse"></div>
+        <span style="font-size:12px;color:var(--muted)">Auto-refresh 2s</span>
+        <button class="run-btn secondary" onclick="pauseTicker()" id="ticker-btn" style="padding:4px 12px;font-size:12px">⏸ Pause</button>
+      </div>
+      <div class="two-col">
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="live-dot active" style="width:6px;height:6px"></span>ecommerce-orders → ecommerce_orders
+          </div>
+          <div class="stream-box" id="ecom-stream"><span style="color:#5C6370">Waiting…</span></div>
+        </div>
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="live-dot active" style="width:6px;height:6px"></span>iot-sensors-csv → iot_sensor_readings
+          </div>
+          <div class="stream-box" id="iot-stream"><span style="color:#5C6370">Waiting…</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /overview -->
+
+
+<!-- ══════════════════════════ E-COMMERCE ══════════════════════════════════ -->
+<div class="panel" id="panel-ecom">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Order Metrics</span>
+      <span class="section-desc">Revenue, throughput, computed buckets</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="kpi-row" id="ecom-kpis"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Revenue Analysis</span>
+      <span class="section-desc">Buckets, categories, throughput, geography</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="two-col" style="margin-bottom:16px">
+        <div><div class="chart-label">Revenue Buckets — order count</div><div class="chart-wrap"><canvas id="ch-ecom-buckets"></canvas></div></div>
+        <div><div class="chart-label">Top Categories by Revenue</div><div class="chart-wrap"><canvas id="ch-ecom-cats"></canvas></div></div>
+      </div>
+      <div class="two-col">
+        <div><div class="chart-label">Orders/min — last 10 min</div><div class="chart-wrap"><canvas id="ch-ecom-thru"></canvas></div></div>
+        <div><div class="chart-label">Revenue by Country</div><div id="ecom-countries" class="mbar-wrap"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Recent Orders</span>
+      <span class="section-desc">Latest 20 rows — including FlowServer computed columns</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="ecom-recent"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">04</span>
+      <span class="section-title">ClickHouse Mirror</span>
+      <span class="section-desc">Same ecommerce-orders Kafka topic, consumed independently straight into ClickHouse</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">
+        ClickHouse's built-in <code>Kafka</code> table engine reads <code>ecommerce-orders</code> under its own
+        consumer group (<code>clickhouse_ecommerce_orders_consumer</code>), completely independent from
+        FlowServer's consumer — both run in parallel off the same topic, so this data is real-time, not a copy
+        of what's in WarehousePG.
+      </div>
+      <div id="ch-kpis" class="kpi-row"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+      <div id="ch-errors"></div>
+      <div id="ch-recent" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+</div><!-- /ecom -->
+
+
+<!-- ══════════════════════════ IoT ══════════════════════════════════════════ -->
+<div class="panel" id="panel-iot">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Sensor Overview</span>
+      <span class="section-desc">Total readings, active sensors, alert distribution</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="kpi-row" id="iot-kpis"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Alert, Comfort &amp; Buildings</span>
+      <span class="section-desc">FlowServer computed: alert_level, comfort_index, building</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="two-col" style="margin-bottom:16px">
+        <div><div class="chart-label">Alert Level Distribution</div><div class="chart-wrap"><canvas id="ch-iot-alerts"></canvas></div></div>
+        <div><div class="chart-label">Comfort Index</div><div class="chart-wrap"><canvas id="ch-iot-comfort"></canvas></div></div>
+      </div>
+      <div class="two-col">
+        <div><div class="chart-label">Avg Temperature by Building (°C)</div><div class="chart-wrap"><canvas id="ch-iot-bldg"></canvas></div></div>
+        <div><div class="chart-label">Readings/min — last 10 min</div><div class="chart-wrap"><canvas id="ch-iot-thru"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Sensor Cards</span>
+      <span class="section-desc">Per-sensor stats — temp, humidity, battery, alert level</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="sensors-grid" class="sensors-grid"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">BULK</span>
+      <span class="section-title">Batch Load via gpfdist</span>
+      <span class="section-desc">Bulk-load synthetic readings straight into WarehousePG — separate from the Kafka streaming path</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">
+          <span class="live-dot" id="batch-dot"></span>
+          gpfdist bulk loader
+        </div>
+        <div class="info-box">
+          Calls <code>generate_iot_batch.py</code> to write one CSV file, then serves it via its own <code>gpfdist</code>
+          instance on port <code>6071</code> (override with <code>GPFDIST_PORT</code> — note FlowServer's own built-in
+          gpfdist listener for Kafka streaming already occupies <code>6070</code>, so this must stay a separate port)
+          and bulk-loads it into <code>public.iot_sensor_readings</code> through a WarehousePG external table —
+          computing the same <code>alert_level</code> / <code>comfort_index</code> / <code>battery_status</code>
+          columns the streaming FlowServer job computes, so batch-loaded rows look consistent with streamed ones.
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Total rows</span>
+          <input type="number" id="batch-total" value="1000000" min="1000" step="1000" style="width:130px">
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn" onclick="batchLoadStart()">▶ Start Batch Load</button>
+          <button class="run-btn danger" onclick="batchLoadStop()">■ Stop</button>
+          <button class="run-btn secondary" onclick="loadBatchLoadLog()">📋 Show Log</button>
+        </div>
+        <div id="batch-progress-wrap" style="display:none;margin-top:10px">
+          <div class="mbar-row" style="grid-template-columns:110px 1fr 140px">
+            <span class="mbar-label" id="batch-stage-label">Generating</span>
+            <div class="mbar"><div class="mbar-fill" id="batch-progress-fill" style="width:0%;background:var(--teal)"></div></div>
+            <span class="mbar-val" id="batch-progress-text">0 / 0</span>
+          </div>
+        </div>
+        <div id="batch-output"></div>
+        <div id="batch-log" style="display:none;margin-top:10px">
+          <div class="log-box" id="batch-log-box"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /iot -->
+
+
+<!-- ══════════════════════════ CDC DEMO ═══════════════════════════════════════ -->
+<div class="panel" id="panel-cdc">
+
+  <div class="section">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">🔗</span>
+      <span class="section-title">TU Credit Bureau CDC Pipeline</span>
+      <span class="section-desc">Postgres EPAS → Debezium → Kafka → FlowServer → WarehousePG</span>
+    </div>
+    <div class="section-body open" style="display:block">
+      <div class="info-box">
+        This pipeline is change-data-capture, not the synthetic generators above: real row changes on EPAS
+        (<code>oltp.credit_accounts</code>, <code>oltp.bureau_score_events</code>) are streamed by Debezium into Kafka,
+        then loaded by FlowServer jobs <code>tu_load_credit_accounts</code> / <code>tu_load_bureau_score_events</code>
+        into <code>tu_bureau_demo.*</code> on WarehousePG. You can submit/start/stop those jobs and insert test rows
+        directly from this tab below, or continue to manage them from the FlowServer UI — both work against the
+        same jobs.
+      </div>
+
+      <div class="pipeline" id="cdc-pipeline">
+        <div class="pipe-node"><div class="pipe-label">Source</div><div class="pipe-name" style="color:var(--blue)">EPAS :5444</div></div>
+        <div class="pipe-arrow" id="cdc-arrow-slot">→</div>
+        <div class="pipe-node"><div class="pipe-label">CDC</div><div class="pipe-name" style="color:var(--purple)">Debezium</div></div>
+        <div class="pipe-arrow live">→</div>
+        <div class="pipe-node"><div class="pipe-label">Message Bus</div><div class="pipe-name" style="color:var(--purple)">Kafka</div></div>
+        <div class="pipe-arrow" id="cdc-arrow-fs">→</div>
+        <div class="pipe-node"><div class="pipe-label">Stream Engine</div><div class="pipe-name" style="color:var(--teal)">FlowServer</div></div>
+        <div class="pipe-arrow" id="cdc-arrow-db">→</div>
+        <div class="pipe-node"><div class="pipe-label">Target</div><div class="pipe-name" style="color:var(--green)">WarehousePG :5432</div></div>
+      </div>
+
+      <div id="cdc-kpis" class="kpi-row"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+      <div id="cdc-errors"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">⚡</span>
+      <span class="section-title">CDC Job Control &amp; Test Data</span>
+      <span class="section-desc">Submit/start/stop the CDC FlowServer jobs, and insert test rows on EPAS to watch them land</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+
+      <div class="ctrl-card">
+        <div class="ctrl-card-title">FlowServer jobs — tu_load_credit_accounts / tu_load_bureau_score_events / tu_load_credit_inquiries</div>
+        <div id="cdc-jobs-status" class="status-grid" style="margin-bottom:10px">
+          <div class="loading"><div class="spinner"></div>Loading…</div>
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn" onclick="cdcJobsStartAll()">▶ Submit &amp; Start All CDC Jobs</button>
+          <button class="run-btn danger" onclick="cdcJobsStopAll()">■ Stop All CDC Jobs</button>
+        </div>
+        <div id="cdc-jobs-output"></div>
+      </div>
+
+      <div class="ctrl-card" style="margin-top:10px">
+        <div class="ctrl-card-title">
+          <span class="live-dot" id="cdc-gen-dot"></span>
+          Continuous generator — writes directly to EPAS
+        </div>
+        <div class="info-box">
+          Unlike the e-commerce/IoT generators (which produce to Kafka), this writes ordinary INSERT/UPDATE
+          statements straight into <code>oltp.credit_accounts</code> / <code>oltp.bureau_score_events</code> on EPAS —
+          Debezium's logical replication is what turns those row changes into CDC events, same as a real
+          operational system. Without this running, those tables only get data when you click Insert Test Rows /
+          Simulate Update manually.
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">New accounts</span>
+          <input type="number" id="cdc-gen-new" value="2" min="0" step="0.5" style="width:70px">
+          <span style="font-size:12px;color:var(--muted)">/min</span>
+          <span class="ctrl-label" style="margin-left:12px">Updates</span>
+          <input type="number" id="cdc-gen-upd" value="3" min="0" step="0.5" style="width:70px">
+          <span style="font-size:12px;color:var(--muted)">/min</span>
+          <span class="ctrl-label" style="margin-left:12px">Score events</span>
+          <input type="number" id="cdc-gen-score" value="2" min="0" step="0.5" style="width:70px">
+          <span style="font-size:12px;color:var(--muted)">/min</span>
+        </div>
+        <div class="ctrl-row">
+          <button class="run-btn" onclick="cdcGeneratorStart()">▶ Start Generator</button>
+          <button class="run-btn danger" onclick="cdcGeneratorStop()">■ Stop Generator</button>
+          <button class="run-btn secondary" onclick="loadCdcGeneratorLog()">📋 Show Log</button>
+        </div>
+        <div id="cdc-gen-output"></div>
+        <div id="cdc-gen-log" style="display:none;margin-top:10px">
+          <div class="log-box" id="cdc-gen-log-box"></div>
+        </div>
+      </div>
+
+      <div class="ctrl-card" style="margin-top:10px">
+        <div class="ctrl-card-title">Insert / update rows on EPAS (source)</div>
+        <div class="info-box">
+          <b>Insert Test Rows</b> adds brand-new synthetic rows into <code>oltp.*</code> on EPAS — new
+          <code>bureau_score_events</code> rows link to an existing account's <code>consumer_id</code> ~85% of the
+          time, so they actually join back to <code>credit_accounts</code> (a small unlinked fraction represents
+          bureau-only consumers with no account here yet). <b>Simulate Update</b> mutates existing rows in
+          <code>oltp.credit_accounts</code> (a random paydown, dpd_bucket, and status change) — since that target
+          table uses a merge/upsert on <code>account_id</code>, the row should update <b>in place</b> in
+          WarehousePG rather than appear as a duplicate. <b>Backfill Scores</b> guarantees every account has a
+          bureau score by inserting one for every <code>consumer_id</code> that doesn't have one yet — useful before
+          training the MADlib model, so its "latest bureau score" feature isn't defaulting for most accounts.
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Rows</span>
+          <input type="number" id="cdc-insert-n" value="5" min="1" max="500" style="width:80px">
+          <span class="ctrl-label" style="margin-left:16px;min-width:auto">Table</span>
+          <select id="cdc-insert-table">
+            <option value="credit_accounts">credit_accounts</option>
+            <option value="bureau_score_events">bureau_score_events</option>
+          </select>
+          <button class="run-btn" onclick="cdcInsertTestRows()">🧪 Insert Test Rows</button>
+          <button class="run-btn secondary" onclick="cdcUpdateTestRows()">🔄 Simulate Update</button>
+          <button class="run-btn secondary" onclick="cdcBackfillScores()">📊 Backfill Scores</button>
+        </div>
+        <div id="cdc-insert-output"></div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Replication Slot &amp; Publication</span>
+      <span class="section-desc">EPAS-side CDC health — debezium_tu_slot / debezium_tu_publication</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="cdc-slot-detail"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Source vs Target Row Counts</span>
+      <span class="section-desc">oltp.* on EPAS vs tu_bureau_demo.* on WarehousePG</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="cdc-counts"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Live Tickers — WarehousePG target</span>
+      <span class="section-desc">Latest rows landed via CDC — refreshes every 2s</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="two-col">
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="live-dot active" style="width:6px;height:6px"></span>credit_accounts
+          </div>
+          <div class="stream-box" id="cdc-ca-stream"><span style="color:#5C6370">Waiting…</span></div>
+        </div>
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="live-dot active" style="width:6px;height:6px"></span>bureau_score_events
+          </div>
+          <div class="stream-box" id="cdc-bse-stream"><span style="color:#5C6370">Waiting…</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /cdc -->
+
+
+<!-- ══════════════════════════ SQL EDITOR — validate CDC ══════════════════════ -->
+<div class="panel" id="panel-sqleditor">
+
+  <div class="section">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">🔎</span>
+      <span class="section-title">SQL Editor</span>
+      <span class="section-desc">Run ad-hoc queries against EPAS (source, 5444) or WarehousePG (target, 5432) to validate CDC</span>
+    </div>
+    <div class="section-body open" style="display:block">
+
+      <div class="info-box">
+        Use this to verify the CDC pipeline end-to-end: check the replication slot / publication on EPAS,
+        compare row counts between the source (<code>oltp.*</code>) and target (<code>tu_bureau_demo.*</code>) tables,
+        or spot-check recent rows on either side. Only one statement runs at a time. Data-changing statements
+        (DROP / DELETE / TRUNCATE / ALTER / UPDATE / INSERT / …) will ask you to confirm before running.
+      </div>
+
+      <div class="sqled-toolbar">
+        <span class="ctrl-label" style="min-width:auto">Connection</span>
+        <select id="sqled-conn" onchange="onSqlConnChange()" style="min-width:260px"></select>
+        <button class="run-btn" onclick="runSqlQuery()">▶ Run Query</button>
+        <button class="run-btn secondary" onclick="clearSqlEditor()">✕ Clear</button>
+      </div>
+
+      <div class="sqled-presets" id="sqled-presets"></div>
+
+      <textarea class="sqled-textarea" id="sqled-sql" spellcheck="false"
+        placeholder="SELECT slot_name, active, restart_lsn FROM pg_replication_slots;"></textarea>
+
+      <div class="sqled-meta" id="sqled-meta"></div>
+      <div id="sqled-output"></div>
+      <div id="sqled-results" style="margin-top:12px"></div>
+
+    </div>
+  </div>
+
+</div><!-- /sqleditor -->
+
+
+<!-- ══════════════════════════ CREDIT RISK — MADlib ══════════════════════════ -->
+<div class="panel" id="panel-madlib">
+
+  <div class="section">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">🧠</span>
+      <span class="section-title">Credit Risk Scoring — Apache MADlib</span>
+      <span class="section-desc">In-database logistic regression on the CDC'd bureau data — no export to a separate ML platform</span>
+    </div>
+    <div class="section-body open" style="display:block">
+      <div class="info-box">
+        Data CDC'd from EPAS lands in <code>tu_bureau_demo.credit_accounts</code> and is <b>immediately</b>
+        scoreable, in the same WarehousePG database, using Apache MADlib's <code>logregr_train</code> /
+        <code>logregr_predict</code>. Features: outstanding/sanctioned ratio, log(sanctioned_amount), latest bureau
+        score, account age, and product type. Label: currently delinquent (60+ days past due, or status flagged
+        delinquent). Re-run training any time — e.g. after Simulate Update on the CDC tab — to reflect the
+        latest data.
+      </div>
+
+      <div class="ctrl-row">
+        <button class="run-btn" onclick="madlibTrain()">▶ Train / Retrain Model</button>
+        <span id="madlib-train-spinner" style="display:none" class="loading"><div class="spinner"></div>Training… this can take a moment</span>
+      </div>
+      <div id="madlib-train-output"></div>
+
+      <div id="madlib-kpis" class="kpi-row" style="margin-top:14px"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+      <div id="madlib-errors"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Risk Tier Distribution</span>
+      <span class="section-desc">Accounts bucketed by predicted probability of delinquency</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="madlib-tiers"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Highest-Risk Accounts</span>
+      <span class="section-desc">Top 20 by predicted probability of delinquency</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="madlib-top-risk"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+</div><!-- /madlib -->
+
+
+<!-- ══════════════════════════ PXF — external table (MinIO/S3) ═══════════════ -->
+<div class="panel" id="panel-pxf">
+
+  <div class="section">
+    <div class="section-header" style="cursor:default">
+      <span class="section-num">📈</span>
+      <span class="section-title">PXF External Table — Stock Prices</span>
+      <span class="section-desc">Federated query over ORC/Parquet files on MinIO/S3 — no load step, WarehousePG reads the files directly</span>
+    </div>
+    <div class="section-body open" style="display:block">
+      <div class="info-box">
+        Unlike every other tab in this dashboard, nothing here is copied into WarehousePG first.
+        <code>stock_prices_orc</code> / <code>stock_prices_parquet</code> are PXF external tables pointing straight
+        at files sitting in MinIO (S3-compatible object storage) — every query reads the files live via the
+        <code>s3:orc</code> / <code>s3:parquet</code> profiles. Requires the <code>pxf</code> extension
+        (<code>CREATE EXTENSION pxf;</code>) and a PXF server profile named <code>minio</code> already configured.
+        This is the "query data lake files in place" story: same SQL interface, zero ingestion pipeline.
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label" style="min-width:auto">Format</span>
+        <select id="pxf-format" onchange="loadPxf()">
+          <option value="orc">ORC</option>
+          <option value="parquet">Parquet</option>
+        </select>
+        <button class="run-btn" onclick="pxfCreateTable()">▶ Create / Refresh Both Tables</button>
+        <button class="run-btn secondary" onclick="loadPxf()">↺ Reload Data</button>
+      </div>
+      <div id="pxf-create-output"></div>
+      <div id="pxf-kpis" class="kpi-row" style="margin-top:14px"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+      <div id="pxf-errors"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">01</span>
+      <span class="section-title">Sample Query</span>
+      <span class="section-desc">SELECT symbol, date, open, high FROM stock_prices_orc LIMIT 10</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div id="pxf-recent-meta" style="font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:6px"></div>
+      <div id="pxf-recent"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">02</span>
+      <span class="section-title">Price History by Symbol</span>
+      <span class="section-desc">Closing price over time, plus full OHLCV detail</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-row">
+        <span class="ctrl-label" style="min-width:auto">Symbol</span>
+        <select id="pxf-symbol" onchange="loadPxfSeries()"></select>
+      </div>
+      <div id="pxf-series-meta" style="font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:6px"></div>
+      <div class="chart-wrap" style="margin-top:12px"><canvas id="ch-pxf-price"></canvas></div>
+      <div id="pxf-series-table" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">03</span>
+      <span class="section-title">Filter Pushdown Benchmark</span>
+      <span class="section-desc">gp_external_enable_filter_pushdown — time a filtered query with it on vs off</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">
+        WarehousePG can push a <code>WHERE</code> clause down to the PXF scan itself — filtering at the source —
+        or pull every row into GPDB first and filter there. Current cluster default:
+        <b id="pxf-pushdown-default">—</b>. This runs the same filtered <code>COUNT(*)</code> with the setting
+        explicitly forced on and off (this session only) so you can see the real difference. Try both
+        <code>=</code> and <code>!=</code> — many external readers only push down equality/range predicates,
+        not inequality, so the two can behave very differently.
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label" style="min-width:auto">Symbol filter</span>
+        <select id="pxf-bench-symbol"></select>
+        <span class="ctrl-label" style="margin-left:12px;min-width:auto">Operator</span>
+        <select id="pxf-bench-operator">
+          <option value="=">=</option>
+          <option value="!=">!=</option>
+        </select>
+        <button class="run-btn" onclick="pxfBenchmark(true)">▶ Run with Pushdown ON</button>
+        <button class="run-btn secondary" onclick="pxfBenchmark(false)">▶ Run with Pushdown OFF</button>
+      </div>
+      <div id="pxf-bench-output"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">04</span>
+      <span class="section-title">EXPLAIN Plan Viewer</span>
+      <span class="section-desc">See whether a filter actually lands on the scan node itself, or gets applied afterward</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">
+        Runs <code>EXPLAIN</code> on a filtered query against the external table. If the filter was pushed down,
+        you'll typically see a <code>Filter:</code> line right on the External/Foreign Scan node itself. If it
+        wasn't, GPDB pulls all rows first and filters afterward in a separate step — same result, more data moved.
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label" style="min-width:auto">Column</span>
+        <select id="pxf-explain-column">
+          <option value="open">open</option>
+          <option value="high">high</option>
+          <option value="low">low</option>
+          <option value="close">close</option>
+          <option value="volume">volume</option>
+        </select>
+        <span class="ctrl-label" style="margin-left:12px;min-width:auto">Symbol</span>
+        <select id="pxf-explain-symbol"></select>
+        <span class="ctrl-label" style="margin-left:12px;min-width:auto">Operator</span>
+        <select id="pxf-explain-operator">
+          <option value="!=">!=</option>
+          <option value="=">=</option>
+          <option value=">">&gt;</option>
+          <option value="<">&lt;</option>
+        </select>
+        <button class="run-btn" onclick="pxfExplain()">▶ Run EXPLAIN</button>
+      </div>
+      <div id="pxf-explain-output"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">05</span>
+      <span class="section-title">News &amp; Sentiment — JSON on MinIO</span>
+      <span class="section-desc">A separate PXF external table (s3:json profile) — different bucket, different format</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">
+        <code>jsonb_events</code> reads <code>clean_jsonb_data_chunk_1.json</code> straight from MinIO via PXF's
+        <code>s3:json</code> profile — per-symbol news headlines with a sentiment label, same "query in place"
+        pattern as the stock price tables, different dataset entirely.
+      </div>
+      <div class="ctrl-row">
+        <button class="run-btn" onclick="pxfJsonbCreateTable()">▶ Create / Refresh jsonb_events</button>
+        <button class="run-btn secondary" onclick="loadPxfJsonb()">↺ Reload</button>
+      </div>
+      <div id="pxf-jsonb-create-output"></div>
+      <div id="pxf-jsonb-kpis" class="kpi-row" style="margin-top:14px"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+      <div id="pxf-jsonb-errors"></div>
+      <div id="pxf-jsonb-meta" style="font-family:var(--mono);font-size:11px;color:var(--faint);margin:8px 0 6px"></div>
+      <div id="pxf-jsonb-recent" style="margin-top:4px"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">06</span>
+      <span class="section-title">Browse MinIO</span>
+      <span class="section-desc">List buckets and objects directly from the same MinIO instance PXF reads from</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="ctrl-row">
+        <span class="ctrl-label" style="min-width:auto">Bucket</span>
+        <select id="minio-bucket" onchange="loadMinioObjects()"></select>
+        <span class="ctrl-label" style="margin-left:12px;min-width:auto">Prefix</span>
+        <input type="text" id="minio-prefix" placeholder="optional" style="width:160px">
+        <button class="run-btn secondary" onclick="loadMinioObjects()">🔎 List Objects</button>
+      </div>
+      <div id="minio-errors"></div>
+      <div id="minio-objects" style="margin-top:12px"><div class="loading"><div class="spinner"></div>Loading buckets…</div></div>
+      <div id="minio-preview" style="display:none;margin-top:12px">
+        <div class="ctrl-card-title">Preview — <span id="minio-preview-key"></span></div>
+        <div class="log-box" id="minio-preview-box" style="height:220px"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pxf -->
+
+
+<!-- ══════════════════════════ PIPELINE CONFIG ═════════════════════════════ -->
+<div class="panel" id="panel-pipeline">
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">FS</span>
+      <span class="section-title">FlowServer Job — ecommerce-orders.yaml</span>
+      <span class="section-desc">JSON from Kafka → computed columns → WarehousePG</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">FlowServer reads JSON from <code>ecommerce-orders</code>, applies SQL CASE expressions to compute <code>revenue_bucket</code>, <code>is_bulk_order</code>, and <code>processing_time</code> — all declared in YAML, zero application code.</div>
+      <div id="ecom-yaml-panel"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">FS</span>
+      <span class="section-title">FlowServer Job — iot-sensors-csv.yaml</span>
+      <span class="section-desc">CSV from Kafka → 8 computed columns → WarehousePG</span>
+      <span class="chevron open">▼</span>
+    </div>
+    <div class="section-body open">
+      <div class="info-box">FlowServer reads CSV (skip_header_lines: 1) and computes <code>alert_level</code>, <code>building</code>, <code>floor</code>, <code>temperature_f</code>, <code>comfort_index</code>, <code>battery_status</code>, <code>data_quality</code>, <code>processed_at</code> — declared in YAML.</div>
+      <div id="iot-yaml-panel"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">DB</span>
+      <span class="section-title">WarehousePG Schema</span>
+      <span class="section-desc">Table definitions — DISTRIBUTED BY and indexes</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="section-body">
+      <div id="schema-panel"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header" onclick="toggle(this)">
+      <span class="section-num">CONF</span>
+      <span class="section-title">FlowServer Config — flow_server.json</span>
+      <span class="section-desc">Port 6060 / gpfdist 6070 / Prometheus 9080</span>
+      <span class="chevron">▼</span>
+    </div>
+    <div class="section-body">
+      <div id="fsconf-panel"></div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+</div><!-- /page -->
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+//  UTILS
+// ══════════════════════════════════════════════════════════════════════════════
+function toggle(hdr){
+  const b=hdr.nextElementSibling,c=hdr.querySelector('.chevron');
+  b.classList.toggle('open'); c.classList.toggle('open');
+}
+function switchTab(n){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+n).classList.add('active');
+  document.getElementById('tab-'+n).classList.add('active');
+}
+async function api(path, opts){
+  const r=await fetch(path, opts);
+  return r.json();
+}
+function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── SQL panel ─────────────────────────────────────────────────────────────────
+function sqlPanel(content, label, open=false){
+  // Detect YAML vs SQL and highlight accordingly
+  const esc = escH(content);
+  let h = esc
+    // YAML keys
+    .replace(/^(\s*)([\w_]+):/gm, '$1<span class="s-yaml-key">$2</span>:')
+    // SQL keywords
+    .replace(/\b(CASE|WHEN|THEN|ELSE|END|SELECT|FROM|WHERE|AND|OR|NOT|BETWEEN|IN|CAST|GROUP BY|ORDER BY|LIMIT|INSERT|INTO|CREATE|TABLE|IF|EXISTS|DROP|DISTRIBUTED|BY)\b/g,'<span class="s-kw">$1</span>')
+    .replace(/\b(SPLIT_PART|NOW|ROUND|COALESCE|DATE_TRUNC|COUNT|SUM|AVG|MAX|MIN)\b/g,'<span class="s-fn">$1</span>')
+    .replace(/(#[^\n]*)/g,'<span class="s-cm">$1</span>')
+    .replace(/(--[^\n]*)/g,'<span class="s-cm">$1</span>')
+    .replace(/('(?:[^'\\]|\\.)*')/g,'<span class="s-str">$1</span>')
+    .replace(/\b(\d+\.?\d*)\b/g,'<span class="s-num">$1</span>');
+  const uid='sp-'+Math.random().toString(36).slice(2,8);
+  const openCls = open ? 'open' : '';
+  const hint    = open ? 'click to hide' : 'click to show';
+  return `<div class="sql-panel">
+    <div class="sql-panel-header" onclick="tSql('${uid}')">
+      <span class="sql-label">${label}</span>
+      <span class="sql-toggle-hint" id="${uid}-h">${hint}</span>
+    </div>
+    <div class="sql-body ${openCls}" id="${uid}">
+      <pre class="sql-pre">${h}</pre>
+      <div class="sql-footer"><button class="copy-btn" onclick="cpSql('${uid}',this)">copy</button></div>
+    </div>
+  </div>`;
+}
+function tSql(uid){
+  const b=document.getElementById(uid),h=document.getElementById(uid+'-h');
+  h.textContent=b.classList.toggle('open')?'click to hide':'click to show';
+}
+function cpSql(uid,btn){
+  navigator.clipboard.writeText(document.getElementById(uid).querySelector('.sql-pre').textContent)
+    .then(()=>{btn.textContent='copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied')},2000)});
+}
+
+function showOutput(id, ok, msg){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.innerHTML = `<div class="output-msg ${ok?'ok':'err'}">${ok?'✓':'✗'} ${escH(msg)}</div>`;
+  setTimeout(()=>{ if(el) el.innerHTML=''; }, 4000);
+}
+
+function showToast(h){
+  let t=document.getElementById('_t');
+  if(!t){t=document.createElement('div');t.id='_t';
+    t.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1A1A18;color:#fff;padding:9px 18px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap';
+    document.body.appendChild(t);}
+  t.innerHTML=h; t.style.opacity='1';
+  clearTimeout(t._t); t._t=setTimeout(()=>t.style.opacity='0',2800);
+}
+
+Chart.defaults.font  = {family:"'IBM Plex Mono',monospace",size:11};
+Chart.defaults.color = '#9B9890';
+function mkChart(id, cfg){
+  const ex=Chart.getChart(id); if(ex) ex.destroy();
+  return new Chart(document.getElementById(id).getContext('2d'), cfg);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  STATUS POLL
+// ══════════════════════════════════════════════════════════════════════════════
+let lastStatus = {};
+
+async function loadStatus(){
+  try {
+    const d = await api('/api/status');
+    lastStatus = d;
+
+    // Header
+    document.getElementById('status-dot').className = 'status-dot ' + (d.db_ok ? 'ok' : 'err');
+    document.getElementById('status-text').textContent = d.db_ok ? 'DB connected' : 'DB error';
+    document.getElementById('ecom-badge').textContent  = (d.ecommerce?.total||0).toLocaleString()+' orders';
+    document.getElementById('iot-badge').textContent   = (d.iot?.total||0).toLocaleString()+' readings';
+    document.getElementById('refresh-ts').textContent  = new Date().toLocaleTimeString();
+
+    // Live dot
+    const flowing = (d.ecommerce?.last_min||0)+(d.iot?.last_min||0) > 0;
+    document.getElementById('live-dot').className = 'live-dot'+(flowing?' active':'');
+    document.getElementById('live-label').textContent = flowing
+      ? `Flowing — ${d.ecommerce?.last_min||0} orders/min · ${d.iot?.last_min||0} readings/min`
+      : 'No data in last minute';
+
+    // Overview KPIs
+    document.getElementById('ov-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">E-Com Orders</div><div class="kpi-val teal">${(d.ecommerce?.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Orders/min</div><div class="kpi-val green">${d.ecommerce?.last_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">IoT Readings</div><div class="kpi-val blue">${(d.iot?.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Readings/min</div><div class="kpi-val green">${d.iot?.last_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Last E-Com</div><div class="kpi-val" style="font-size:13px">${(d.ecommerce?.latest||'—').slice(11,19)||'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Last IoT</div><div class="kpi-val" style="font-size:13px">${(d.iot?.latest||'—').slice(11,19)||'—'}</div></div>`;
+
+    // Control tab — process status grid
+    const p = d.processes || {};
+    const j = d.jobs || {};
+    const procItems = [
+      {key:'flowserver',       label:'FlowServer',       port:6060},
+      {key:'order-generator',  label:'order-generator',  port:null},
+      {key:'iot-generator',    label:'iot-generator',    port:null},
+      {key:'dashboard-api',    label:'dashboard-api',    port:5055},
+    ];
+    document.getElementById('status-grid').innerHTML = procItems.map(item=>{
+      const info = p[item.key] || {};
+      const running = info.running;
+      return `<div class="proc-status">
+        <div class="proc-dot ${running?'running':'stopped'}"></div>
+        <span class="proc-name">${item.label}</span>
+        <span class="proc-pid">${running ? 'PID '+(info.pid||'?') : 'stopped'}</span>
+      </div>`;
+    }).join('');
+
+    // Pipeline arrows
+    const fsRunning  = p['flowserver']?.running;
+    const genRunning = p['order-generator']?.running || p['iot-generator']?.running;
+    document.getElementById('pp-arrow-fs').className = 'pipe-arrow'+(fsRunning?' live':'');
+    document.getElementById('pp-arrow-db').className = 'pipe-arrow'+(flowing?' live':'');
+
+    // Job dots
+    ['ecommerce-orders','iot-sensors-csv'].forEach(jn=>{
+      const dotId = 'job-dot-'+(jn==='ecommerce-orders'?'ecom':'iot');
+      const dot = document.getElementById(dotId);
+      if(dot) dot.className = 'live-dot'+(j[jn]?.running?' active':'');
+    });
+
+    // Jobs status grid
+    document.getElementById('jobs-status').innerHTML = Object.entries(j).map(([name, info])=>`
+      <div class="proc-status">
+        <div class="proc-dot ${info.running?'running':'stopped'}"></div>
+        <span class="proc-name">${name}</span>
+        <span class="proc-pid">${info.running ? 'running' : 'stopped'}</span>
+      </div>`).join('');
+
+  } catch(e){
+    document.getElementById('status-dot').className = 'status-dot err';
+    document.getElementById('status-text').textContent = 'API error';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  START ALL / STOP ALL
+// ══════════════════════════════════════════════════════════════════════════════
+async function startAll(){
+  const el = document.getElementById('all-output');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Starting everything…</div>';
+  const body = {
+    ecom_rate:  +document.getElementById('gen-ecom-rate').value,
+    iot_rate:   +document.getElementById('gen-iot-rate').value,
+    ecom_total: +document.getElementById('gen-ecom-total').value,
+    iot_total:  +document.getElementById('gen-iot-total').value,
+  };
+  const d = await api('/api/start_all', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const stepsHtml = (d.steps||[]).map(s=>`<div style="color:var(--green)">✓ ${escH(s)}</div>`).join('');
+  const errHtml   = (d.errors||[]).map(e=>`<div style="color:var(--red)">✗ ${escH(e)}</div>`).join('');
+  el.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12px;line-height:1.8">
+    ${stepsHtml}${errHtml}
+  </div>`;
+  if(d.ok) showToast('▶ Pipeline started');
+  setTimeout(loadStatus, 1500);
+}
+
+async function stopAll(){
+  const el = document.getElementById('all-output');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Stopping everything…</div>';
+  const d = await api('/api/stop_all', {method:'POST'});
+  const stepsHtml = (d.steps||[]).map(s=>`<div style="color:var(--muted)">■ ${escH(s)}</div>`).join('');
+  el.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12px;line-height:1.8">
+    ${stepsHtml}
+  </div>`;
+  showToast('■ Pipeline stopped');
+  setTimeout(loadStatus, 1000);
+}
+
+async function resetAll(){
+  const el = document.getElementById('all-output');
+  if(!confirm('This will TRUNCATE the tables, delete & recreate Kafka topics, and restart everything. Continue?')) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Resetting — this takes ~20s…</div>';
+  const body = {
+    ecom_rate:  +document.getElementById('gen-ecom-rate').value,
+    iot_rate:   +document.getElementById('gen-iot-rate').value,
+    ecom_total: +document.getElementById('gen-ecom-total').value,
+    iot_total:  +document.getElementById('gen-iot-total').value,
+  };
+  const d = await api('/api/reset_all', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const lines = [...(d.steps||[]).map(s=>{
+    const isHeader = s.startsWith('──');
+    const isErr = d.errors?.includes(s);
+    const color = isHeader ? 'var(--muted)' : isErr ? 'var(--red)' : s.includes('stopped')||s.includes('not running') ? 'var(--muted)' : 'var(--green)';
+    const icon  = isHeader ? '' : isErr ? '✗ ' : s.includes('stopped')||s.includes('not running') ? '■ ' : '✓ ';
+    return `<div style="color:${color};font-weight:${isHeader?'600':'400'}">${icon}${escH(s)}</div>`;
+  })];
+  el.innerHTML = `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-size:12px;line-height:1.9">${lines.join('')}</div>`;
+  showToast(d.ok ? '↺ Reset complete — demo running fresh' : '⚠ Reset had errors');
+  setTimeout(loadStatus, 2000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  FLOWSERVER CONTROL
+// ══════════════════════════════════════════════════════════════════════════════
+async function fsStart(){
+  showOutput('fs-output', true, 'Starting FlowServer…');
+  const d = await api('/api/flowserver/start', {method:'POST'});
+  showOutput('fs-output', d.ok, d.message || (d.error||''));
+  if(d.log) showFsLog(d.log);
+  loadStatus();
+}
+async function fsStop(){
+  const d = await api('/api/flowserver/stop', {method:'POST'});
+  showOutput('fs-output', d.ok, d.message || '');
+  loadStatus();
+}
+async function loadFsLog(){
+  const logDiv = document.getElementById('fs-log');
+  const d = await api('/api/flowserver/log?n=50');
+  document.getElementById('fs-log-box').textContent = d.log || '(empty)';
+  logDiv.style.display = logDiv.style.display === 'none' ? 'block' : 'none';
+}
+function showFsLog(txt){
+  document.getElementById('fs-log-box').textContent = txt;
+  document.getElementById('fs-log').style.display = 'block';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  JOB CONTROL
+// ══════════════════════════════════════════════════════════════════════════════
+function jobOutputId(name){ return 'job-output-'+(name==='ecommerce-orders'?'ecom':'iot'); }
+
+async function jobSubmit(name){
+  showOutput(jobOutputId(name), true, `Submitting ${name}…`);
+  const d = await api(`/api/jobs/${name}/submit`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  loadStatus();
+}
+async function jobStart(name){
+  const d = await api(`/api/jobs/${name}/start`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  showToast(d.ok ? `✓ Job <b>${name}</b> started` : `✗ ${d.output||d.error||''}`);
+  loadStatus();
+}
+async function jobStop(name){
+  const d = await api(`/api/jobs/${name}/stop`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  showToast(`■ Job <b>${name}</b> stopped`);
+  loadStatus();
+}
+async function jobRestart(name){
+  showOutput(jobOutputId(name), true, `Restarting ${name}…`);
+  const d = await api(`/api/jobs/${name}/restart`, {method:'POST'});
+  showOutput(jobOutputId(name), d.ok, d.output || (d.error||''));
+  loadStatus();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  GENERATOR CONTROL
+// ══════════════════════════════════════════════════════════════════════════════
+async function genStart(target){
+  const body = {
+    target,
+    ecom_rate:  +document.getElementById('gen-ecom-rate').value,
+    iot_rate:   +document.getElementById('gen-iot-rate').value,
+    ecom_total: +document.getElementById('gen-ecom-total').value,
+    iot_total:  +document.getElementById('gen-iot-total').value,
+  };
+  const d = await api('/api/generators/start', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const msg = d.started?.length ? `Started: ${d.started.join(', ')}` : 'Already running';
+  showOutput('gen-output', true, msg);
+  showToast('▶ Generators started');
+  loadStatus();
+}
+async function genStop(target){
+  const d = await api('/api/generators/stop', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target})
+  });
+  const msg = d.stopped?.length ? `Stopped: ${d.stopped.join(', ')}` : 'Already stopped';
+  showOutput('gen-output', true, msg);
+  showToast('■ Generators stopped');
+  loadStatus();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  IoT BATCH LOAD (gpfdist)
+// ══════════════════════════════════════════════════════════════════════════════
+let batchPollTimer = null;
+
+async function batchLoadStart(){
+  const total_rows = +document.getElementById('batch-total').value;
+  const d = await api('/api/iot/batch-load/start', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({total_rows}),
+  });
+  if(!d.ok){
+    showOutput('batch-output', false, d.error || 'Failed to start batch load');
+    return;
+  }
+  showOutput('batch-output', true, d.message || 'Batch load started');
+  document.getElementById('batch-dot').className = 'live-dot active';
+  document.getElementById('batch-progress-wrap').style.display = 'block';
+  showToast('▶ Batch load started');
+  if(batchPollTimer) clearInterval(batchPollTimer);
+  batchPollTimer = setInterval(pollBatchLoad, 1000);
+  pollBatchLoad();
+}
+
+async function batchLoadStop(){
+  const d = await api('/api/iot/batch-load/stop', {method:'POST'});
+  showOutput('batch-output', d.ok, d.message || '');
+  showToast('■ Batch load stopping…');
+}
+
+async function pollBatchLoad(){
+  try {
+    const s = await api('/api/iot/batch-load/status');
+    const pct = s.total ? Math.round((s.loaded / s.total) * 100) : 0;
+    document.getElementById('batch-progress-fill').style.width = pct + '%';
+    document.getElementById('batch-progress-text').textContent = `${(s.loaded||0).toLocaleString()} / ${(s.total||0).toLocaleString()}`;
+    const stageLabels = {generating:'Generating CSV', loading:'Loading via gpfdist', done:'Done'};
+    document.getElementById('batch-stage-label').textContent = stageLabels[s.stage] || 'Progress';
+
+    if(document.getElementById('batch-log').style.display !== 'none'){
+      loadBatchLoadLog();
+    }
+
+    if(s.running){
+      document.getElementById('batch-dot').className = 'live-dot active';
+    } else {
+      document.getElementById('batch-dot').className = 'live-dot';
+      if(batchPollTimer){ clearInterval(batchPollTimer); batchPollTimer = null; }
+      if(s.error){
+        showOutput('batch-output', false, `Batch load failed: ${s.error}`);
+        loadBatchLoadLog();
+      } else if(s.finished_at){
+        showOutput('batch-output', true, `Batch load complete — ${(s.loaded||0).toLocaleString()} rows loaded`);
+        showToast('✓ Batch load complete');
+        loadStatus();
+      }
+    }
+  } catch(e){}
+}
+
+async function loadBatchLoadLog(){
+  const logDiv = document.getElementById('batch-log');
+  const d = await api('/api/iot/batch-load/log?n=80');
+  document.getElementById('batch-log-box').textContent = d.log || '(empty — nothing logged yet)';
+  logDiv.style.display = 'block';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LIVE TICKERS
+// ══════════════════════════════════════════════════════════════════════════════
+let ecomRows=[], iotRows=[], tickerPaused=false;
+
+async function loadTickers(){
+  if(tickerPaused) return;
+  const [e, i] = await Promise.all([api('/api/ecom/recent'), api('/api/iot/recent')]);
+  ecomRows = Array.isArray(e) ? e : [];
+  iotRows  = Array.isArray(i) ? i : [];
+  renderTickers();
+}
+function renderTickers(){
+  const eBox = document.getElementById('ecom-stream');
+  if(ecomRows.length){
+    eBox.innerHTML = ecomRows.map(r=>`<div class="stream-row">
+      <span class="s-ts">${String(r.timestamp||'').slice(11,19)}</span>
+      <span class="s-id">${r.order_id||'—'}</span>
+      <span class="s-val">$${parseFloat(r.total_price||0).toFixed(0)}</span>
+      <span class="s-tag ${r.revenue_bucket||''}">${r.revenue_bucket||'—'}</span>
+      <span class="s-dim">${r.category||''} · ${r.country||''}</span>
+    </div>`).join('');
+  }
+  const iBox = document.getElementById('iot-stream');
+  const ac = ['#98C379','#D19A66','#E5C07B','#E06C75'];
+  if(iotRows.length){
+    iBox.innerHTML = iotRows.map(r=>`<div class="stream-row">
+      <span class="s-ts">${String(r.timestamp||'').slice(11,19)}</span>
+      <span class="s-id">${r.sensor_id||'—'}</span>
+      <span class="s-val">${r.temperature!=null?parseFloat(r.temperature).toFixed(1)+'°C':'—'}</span>
+      <span class="s-tag ${r.status||''}">${r.status||'—'}</span>
+      <span style="color:${ac[r.alert_level||0]};min-width:70px">L${r.alert_level??'?'} ${r.comfort_index||''}</span>
+      <span class="s-dim">${r.building||''}${r.floor?' F'+r.floor:''}</span>
+    </div>`).join('');
+  }
+}
+function pauseTicker(){
+  tickerPaused=!tickerPaused;
+  const btn=document.getElementById('ticker-btn');
+  document.getElementById('ticker-pulse').className='live-dot'+(tickerPaused?'':' active');
+  btn.textContent=tickerPaused?'▶ Resume':'⏸ Pause';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  E-COMMERCE CHARTS
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadEcom(){
+  try {
+    const d = await api('/api/ecom/metrics');
+    if(d.error) return;
+    const t = d.totals||{};
+    document.getElementById('ecom-kpis').innerHTML=`
+      <div class="kpi"><div class="kpi-label">Total Orders</div><div class="kpi-val teal">${(+t.total_orders||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Total Revenue</div><div class="kpi-val green">$${(+t.total_revenue||0).toLocaleString(undefined,{maximumFractionDigits:0})}</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Order</div><div class="kpi-val">${'$'+(+t.avg_order_value||0).toFixed(2)}</div></div>
+      <div class="kpi"><div class="kpi-label">Orders/min</div><div class="kpi-val blue">${+t.orders_per_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Bulk Orders</div><div class="kpi-val amber">${(+t.bulk_orders||0).toLocaleString()}</div><div class="kpi-sub">qty &gt; 2</div></div>`;
+
+    const bkts = d.buckets||[];
+    mkChart('ch-ecom-buckets',{type:'doughnut',data:{
+      labels:bkts.map(b=>b.revenue_bucket),
+      datasets:[{data:bkts.map(b=>+b.order_count||0),
+        backgroundColor:['#1A7A4A','#9A6A00','#1A5A9A','#9A2A1A'],borderWidth:2,borderColor:'#fff'}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:11},padding:10}}}}});
+
+    const cats = d.categories||[];
+    mkChart('ch-ecom-cats',{type:'bar',data:{
+      labels:cats.map(c=>c.category),
+      datasets:[{data:cats.map(c=>+c.revenue||0),backgroundColor:'rgba(15,110,90,.8)',borderRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',
+      plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(0,0,0,.05)'}},y:{grid:{display:false}}}}});
+
+    const thru = d.throughput||[];
+    mkChart('ch-ecom-thru',{type:'line',data:{
+      labels:thru.map(r=>r.bucket.slice(11,16)),
+      datasets:[{data:thru.map(r=>r.cnt),borderColor:'#0F6E5A',backgroundColor:'rgba(15,110,90,.1)',tension:.3,fill:true,pointRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    const ctry = d.countries||[];
+    const maxR = Math.max(...ctry.map(c=>+c.revenue||0),1);
+    document.getElementById('ecom-countries').innerHTML = ctry.map(c=>`
+      <div class="mbar-row">
+        <span class="mbar-label">${c.country}</span>
+        <div class="mbar"><div class="mbar-fill" style="width:${Math.round((+c.revenue||0)/maxR*100)}%;background:var(--teal)"></div></div>
+        <span class="mbar-val" style="color:var(--teal)">$${Math.round(+c.revenue||0).toLocaleString()}</span>
+      </div>`).join('');
+  } catch(e){}
+}
+
+async function loadEcomRecent(){
+  try {
+    const rows = await api('/api/ecom/recent');
+    if(!Array.isArray(rows)) return;
+    const bc = {low:'bg',medium:'ba',high:'bb',premium:'br'};
+    document.getElementById('ecom-recent').innerHTML=`
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Order ID</th><th>Time</th><th>Customer</th><th>Category</th><th>Total</th><th>Bucket</th><th>Country</th><th>Bulk</th></tr></thead>
+        <tbody>${rows.map(r=>`<tr>
+          <td><code>${r.order_id||'—'}</code></td>
+          <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">${String(r.timestamp||'').slice(11,19)}</td>
+          <td>${escH(r.customer_name||'')}</td>
+          <td>${r.category||'—'}</td>
+          <td style="font-family:var(--mono);color:var(--green)">$${parseFloat(r.total_price||0).toFixed(2)}</td>
+          <td><span class="badge ${bc[r.revenue_bucket]||'bt'}">${r.revenue_bucket||'—'}</span></td>
+          <td style="color:var(--muted)">${r.country||'—'}</td>
+          <td>${r.is_bulk_order?'<span class="badge bt">✓</span>':'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+  } catch(e){}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CLICKHOUSE MIRROR — independent Kafka consumer of ecommerce-orders
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadClickHouse(){
+  try {
+    const [status, recent] = await Promise.all([
+      api('/api/clickhouse/status'), api('/api/clickhouse/recent'),
+    ]);
+
+    if(!status.ok){
+      document.getElementById('ch-kpis').innerHTML = '';
+      document.getElementById('ch-errors').innerHTML =
+        `<div class="error-box">ClickHouse unreachable: ${escH(status.error||'unknown error')}</div>`;
+      document.getElementById('ch-recent').innerHTML = '';
+      return;
+    }
+
+    document.getElementById('ch-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">Total Rows</div><div class="kpi-val teal">${(status.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Rows/min</div><div class="kpi-val green">${status.last_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Latest Row</div><div class="kpi-val" style="font-size:13px">${(status.latest||'—').slice(11,19)||'—'}</div></div>`;
+
+    let errHtml = '';
+    if(status.consumer_error){
+      errHtml = `<div class="error-box">Could not read system.kafka_consumers: ${escH(status.consumer_error)}</div>`;
+    } else if(status.consumers && status.consumers.length){
+      const c = status.consumers[0];
+      errHtml = `<div class="info-box" style="margin-top:8px">
+        Consumer <code>${escH(c.consumer_id||'')}</code> — ${c.is_currently_used ? 'active' : 'idle'},
+        ${(+c.num_messages_read||0).toLocaleString()} messages read, ${c.num_commits||0} commits.
+        Last poll: ${String(c.last_poll_time||'').slice(0,19)||'—'}
+      </div>`;
+    } else if(status.consumers && status.consumers.length === 0){
+      errHtml = `<div class="warn-box">No matching row in system.kafka_consumers for kafka_ecommerce_orders — the Kafka engine table may not be created yet, or ClickHouse hasn't polled since startup.</div>`;
+    }
+    document.getElementById('ch-errors').innerHTML = errHtml;
+
+    if(Array.isArray(recent) && recent.length){
+      const bc = {low:'bg',medium:'ba',high:'bb',premium:'br'};
+      document.getElementById('ch-recent').innerHTML = `
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Order ID</th><th>Time</th><th>Customer</th><th>Category</th><th>Total</th><th>Bucket</th><th>Country</th><th>Bulk</th></tr></thead>
+          <tbody>${recent.map(r=>`<tr>
+            <td><code>${r.order_id||'—'}</code></td>
+            <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">${String(r.timestamp||'').slice(11,19)}</td>
+            <td>${escH(r.customer_name||'')}</td>
+            <td>${r.category||'—'}</td>
+            <td style="font-family:var(--mono);color:var(--green)">$${parseFloat(r.total_price||0).toFixed(2)}</td>
+            <td><span class="badge ${bc[r.revenue_bucket]||'bt'}">${r.revenue_bucket||'—'}</span></td>
+            <td style="color:var(--muted)">${r.country||'—'}</td>
+            <td>${r.is_bulk_order?'<span class="badge bt">✓</span>':'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    } else if(Array.isArray(recent)){
+      document.getElementById('ch-recent').innerHTML = `<span style="color:var(--faint);font-size:12px">No rows yet</span>`;
+    }
+  } catch(e){
+    document.getElementById('ch-errors').innerHTML =
+      `<div class="error-box">ClickHouse status request failed: ${escH(e.message||e)}</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  IoT CHARTS
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadIot(){
+  try {
+    const [d, sensors] = await Promise.all([api('/api/iot/metrics'), api('/api/iot/sensors')]);
+    if(d.error) return;
+    const t=d.totals||{};
+    const critClr=(+t.critical_alerts||0)>0?'red':'green';
+    document.getElementById('iot-kpis').innerHTML=`
+      <div class="kpi"><div class="kpi-label">Total Readings</div><div class="kpi-val teal">${(+t.total_readings||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Active Sensors</div><div class="kpi-val blue">${+t.active_sensors||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Readings/min</div><div class="kpi-val green">${+t.readings_per_min||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Critical Alerts</div><div class="kpi-val ${critClr}">${+t.critical_alerts||0}</div><div class="kpi-sub">level ≥ 2</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Temp</div><div class="kpi-val amber">${t.avg_temp!=null?parseFloat(t.avg_temp).toFixed(1):'—'}°C</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Humidity</div><div class="kpi-val">${t.avg_humidity!=null?parseFloat(t.avg_humidity).toFixed(1):'—'}%</div></div>`;
+
+    const aLbl=['Normal','Warning','Low Battery','Critical'];
+    const aClr=['rgba(26,122,74,.8)','rgba(154,106,0,.8)','rgba(26,90,154,.8)','rgba(154,42,26,.8)'];
+    const alerts=d.alerts||[];
+    mkChart('ch-iot-alerts',{type:'bar',data:{
+      labels:alerts.map(a=>aLbl[a.alert_level]||`L${a.alert_level}`),
+      datasets:[{data:alerts.map(a=>+a.reading_count||0),backgroundColor:alerts.map(a=>aClr[a.alert_level]||aClr[0]),borderRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    const comf=d.comfort||[];
+    const cClr={'comfortable':'#1A7A4A','acceptable':'#9A6A00','uncomfortable':'#9A2A1A'};
+    mkChart('ch-iot-comfort',{type:'doughnut',data:{
+      labels:comf.map(c=>c.comfort_index),
+      datasets:[{data:comf.map(c=>+c.cnt||0),backgroundColor:comf.map(c=>cClr[c.comfort_index]||'#666'),borderWidth:2,borderColor:'#fff'}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:11},padding:10}}}}});
+
+    const bldgs=d.buildings||[];
+    mkChart('ch-iot-bldg',{type:'bar',data:{
+      labels:bldgs.map(b=>b.building),
+      datasets:[{data:bldgs.map(b=>parseFloat(b.avg_temp||0).toFixed(1)),backgroundColor:'rgba(15,110,90,.8)',borderRadius:4}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:false,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    const thru=d.throughput||[];
+    mkChart('ch-iot-thru',{type:'line',data:{
+      labels:thru.map(r=>r.bucket.slice(11,16)),
+      datasets:[{data:thru.map(r=>r.cnt),borderColor:'#1A5A9A',backgroundColor:'rgba(26,90,154,.1)',tension:.3,fill:true,pointRadius:3}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'}}}}});
+
+    if(Array.isArray(sensors) && sensors.length){
+      const aBd=['var(--green)','var(--amber)','var(--blue)','var(--red)'];
+      const bc=b=>b>=80?'var(--green)':b>=40?'var(--amber)':b>=20?'var(--blue)':'var(--red)';
+      document.getElementById('sensors-grid').innerHTML=sensors.map(s=>{
+        const bat=parseFloat(s.avg_battery||0);
+        return `<div class="sensor-card" style="border-top:3px solid ${aBd[s.max_alert||0]}">
+          <div class="sensor-head"><span class="sensor-id">${s.sensor_id||'—'}</span>
+            <span class="badge ${s.max_alert>1?'br':s.max_alert>0?'ba':'bg'}">L${s.max_alert??'?'}</span></div>
+          <div class="sensor-loc">📍 ${s.building||'?'} · Floor ${s.floor||'?'} · ${(+s.reading_count||0).toLocaleString()} readings</div>
+          <div class="sensor-row"><span class="sk">Temperature</span><span class="sv" style="color:var(--amber)">${parseFloat(s.avg_temp||0).toFixed(1)}°C / ${parseFloat(s.avg_temp_f||0).toFixed(1)}°F</span></div>
+          <div class="sensor-row"><span class="sk">Humidity</span><span class="sv">${parseFloat(s.avg_humidity||0).toFixed(1)}%</span></div>
+          <div class="sensor-row"><span class="sk">Battery</span><span class="sv" style="color:${bc(bat)}">${bat.toFixed(0)}%</span></div>
+          <div class="bat-bar"><div class="bat-fill" style="width:${Math.min(100,bat)}%;background:${bc(bat)}"></div></div>
+          <div style="font-size:10px;color:var(--faint);margin-top:6px">Last: ${String(s.last_reading||'').slice(11,19)}</div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e){}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CDC DEMO — TU credit bureau pipeline status
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadCdcJobs(){
+  try {
+    const jobs = await api('/api/cdc/jobs');
+    document.getElementById('cdc-jobs-status').innerHTML = jobs.map(j => `
+      <div class="proc-status">
+        <div class="proc-dot ${j.running?'running':'stopped'}"></div>
+        <span class="proc-name">${j.name}</span>
+        <span class="proc-pid">${j.running ? 'running' : 'stopped'}</span>
+      </div>`).join('');
+  } catch(e){
+    document.getElementById('cdc-jobs-status').innerHTML =
+      `<div class="error-box">Could not load CDC job status: ${escH(e.message||e)}</div>`;
+  }
+}
+
+async function cdcJobsStartAll(){
+  showOutput('cdc-jobs-output', true, 'Submitting & starting CDC jobs…');
+  const d = await api('/api/cdc/jobs/start_all', {method:'POST'});
+  const lines = [
+    ...(d.steps||[]).map(s=>`<div style="color:var(--green)">✓ ${escH(s)}</div>`),
+    ...(d.errors||[]).map(e=>`<div style="color:var(--red)">✗ ${escH(e)}</div>`),
+  ];
+  document.getElementById('cdc-jobs-output').innerHTML =
+    `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;font-size:12px;line-height:1.8;margin-top:8px">${lines.join('')}</div>`;
+  showToast(d.ok ? '▶ CDC jobs started' : '⚠ CDC jobs had errors');
+  loadCdcJobs();
+  setTimeout(loadCdc, 1500);
+}
+
+async function cdcJobsStopAll(){
+  showOutput('cdc-jobs-output', true, 'Stopping CDC jobs…');
+  const d = await api('/api/cdc/jobs/stop_all', {method:'POST'});
+  const lines = (d.steps||[]).map(s=>`<div style="color:var(--muted)">■ ${escH(s)}</div>`);
+  document.getElementById('cdc-jobs-output').innerHTML =
+    `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;font-size:12px;line-height:1.8;margin-top:8px">${lines.join('')}</div>`;
+  showToast('■ CDC jobs stopped');
+  loadCdcJobs();
+}
+
+// ── Continuous CDC generator (writes directly to EPAS) ───────────────────────
+async function cdcGeneratorStart(){
+  const body = {
+    new_accounts_rate: +document.getElementById('cdc-gen-new').value,
+    update_rate:       +document.getElementById('cdc-gen-upd').value,
+    score_rate:        +document.getElementById('cdc-gen-score').value,
+  };
+  showOutput('cdc-gen-output', true, 'Starting generator…');
+  const d = await api('/api/cdc/generator/start', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+  });
+  showOutput('cdc-gen-output', d.ok, d.ok ? d.message : (d.error||'Failed to start'));
+  if(d.ok) showToast('▶ Continuous CDC generator started');
+  if(!d.ok && d.log) loadCdcGeneratorLog();
+  loadCdcGeneratorStatus();
+}
+
+async function cdcGeneratorStop(){
+  const d = await api('/api/cdc/generator/stop', {method:'POST'});
+  showOutput('cdc-gen-output', true, d.message || '');
+  showToast('■ Continuous CDC generator stopped');
+  loadCdcGeneratorStatus();
+}
+
+async function loadCdcGeneratorStatus(){
+  try {
+    const s = await api('/api/cdc/generator/status');
+    document.getElementById('cdc-gen-dot').className = 'live-dot' + (s.running ? ' active' : '');
+  } catch(e){}
+}
+
+async function loadCdcGeneratorLog(){
+  const logDiv = document.getElementById('cdc-gen-log');
+  const d = await api('/api/cdc/generator/log?n=50');
+  document.getElementById('cdc-gen-log-box').textContent = d.log || '(empty)';
+  logDiv.style.display = 'block';
+}
+
+async function cdcInsertTestRows(){
+  const n = +document.getElementById('cdc-insert-n').value;
+  const table = document.getElementById('cdc-insert-table').value;
+  showOutput('cdc-insert-output', true, `Inserting ${n} row(s) into oltp.${table}…`);
+  const d = await api('/api/cdc/insert_test_rows', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({n, table}),
+  });
+  showOutput('cdc-insert-output', d.ok, d.ok ? d.message : (d.error||'Insert failed'));
+  if(d.ok) showToast(`🧪 Inserted ${d.inserted} row(s) into ${table} on EPAS`);
+  setTimeout(loadCdc, 1500);
+}
+
+async function cdcUpdateTestRows(){
+  const n = +document.getElementById('cdc-insert-n').value;
+  const table = document.getElementById('cdc-insert-table').value;
+  const outEl = document.getElementById('cdc-insert-output');
+
+  if(table !== 'credit_accounts'){
+    outEl.innerHTML = `<div class="warn-box">Simulated updates only apply to <code>credit_accounts</code> (the merge/upsert target) — switch the Table dropdown above, or use Insert Test Rows for <code>bureau_score_events</code>.</div>`;
+    return;
+  }
+
+  outEl.innerHTML = `<div class="loading"><div class="spinner"></div>Updating ${n} existing row(s) in oltp.credit_accounts…</div>`;
+  const d = await api('/api/cdc/update_test_rows', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({n}),
+  });
+
+  if(!d.ok){
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Update failed')}</div>`;
+    return;
+  }
+
+  const rowsHtml = d.updated.map(u => `
+    <div style="font-family:var(--mono);font-size:11px;color:var(--muted);padding:2px 0">
+      account_id <code>${u.account_id}</code> → $${u.outstanding_amount.toLocaleString()} ·
+      <span class="badge ba">${u.dpd_bucket}</span> · ${u.status}
+    </div>`).join('');
+
+  outEl.innerHTML = `
+    <div class="output-msg ok">✓ ${escH(d.message)}</div>
+    <div style="margin-top:6px">${rowsHtml}</div>
+    <div style="font-size:11px;color:var(--faint);margin-top:6px">
+      Watch these same account_ids in the credit_accounts ticker below — they should update
+      in place, not appear as new rows.
+    </div>`;
+
+  showToast(`🔄 Updated ${d.updated.length} row(s) on EPAS`);
+  setTimeout(loadCdc, 1500);
+}
+
+async function cdcBackfillScores(){
+  const outEl = document.getElementById('cdc-insert-output');
+  outEl.innerHTML = `<div class="loading"><div class="spinner"></div>Backfilling missing bureau scores…</div>`;
+
+  const d = await api('/api/cdc/backfill_scores', {method: 'POST'});
+
+  if(!d.ok){
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Backfill failed')}</div>`;
+    return;
+  }
+
+  outEl.innerHTML = `<div class="output-msg ok">✓ ${escH(d.message)}</div>`;
+  showToast(d.inserted > 0 ? `📊 Backfilled ${d.inserted} score event(s)` : '📊 Already fully covered');
+  setTimeout(loadCdc, 1500);
+}
+
+async function loadCdc(){
+  try {
+    const [status, recent] = await Promise.all([api('/api/cdc/status'), api('/api/cdc/recent')]);
+
+    const epas = status.epas || {};
+    const whpg = status.whpg || {};
+    const errs = [];
+
+    // ── Pipeline arrows ──────────────────────────────────────────────────────
+    const slotActive = epas.ok && epas.slot && epas.slot.active === true;
+    document.getElementById('cdc-arrow-slot').className = 'pipe-arrow'+(slotActive?' live':'');
+    document.getElementById('cdc-arrow-fs').className   = 'pipe-arrow'+(whpg.ok?' live':'');
+    const targetFlowing = whpg.ok && (
+      (whpg.credit_accounts?.count||0) > 0 || (whpg.bureau_score_events?.count||0) > 0
+    );
+    document.getElementById('cdc-arrow-db').className = 'pipe-arrow'+(targetFlowing?' live':'');
+
+    // ── KPIs ─────────────────────────────────────────────────────────────────
+    const slotVal = !epas.ok ? '—' : (slotActive ? 'Active' : (epas.slot ? 'Inactive' : 'Missing'));
+    const slotClr = !epas.ok ? '' : (slotActive ? 'green' : 'red');
+    const pubVal  = !epas.ok ? '—' : (epas.publication_exists ? 'Present' : 'Missing');
+    const pubClr  = !epas.ok ? '' : (epas.publication_exists ? 'green' : 'red');
+
+    document.getElementById('cdc-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">Replication Slot</div><div class="kpi-val ${slotClr}">${slotVal}</div></div>
+      <div class="kpi"><div class="kpi-label">Publication</div><div class="kpi-val ${pubClr}">${pubVal}</div></div>
+      <div class="kpi"><div class="kpi-label">Source Accounts</div><div class="kpi-val blue">${epas.ok?(epas.credit_accounts||0).toLocaleString():'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Target Accounts</div><div class="kpi-val teal">${whpg.ok?(whpg.credit_accounts?.count||0).toLocaleString():'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Source Score Events</div><div class="kpi-val blue">${epas.ok?(epas.bureau_score_events||0).toLocaleString():'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Target Score Events</div><div class="kpi-val teal">${whpg.ok?(whpg.bureau_score_events?.count||0).toLocaleString():'—'}</div></div>`;
+
+    if(!epas.ok) errs.push(`EPAS (source) unreachable: ${epas.error||'unknown error'}`);
+    if(!whpg.ok) errs.push(`WarehousePG (target) unreachable: ${whpg.error||'unknown error'}`);
+    document.getElementById('cdc-errors').innerHTML = errs.length
+      ? errs.map(e=>`<div class="error-box">${escH(e)}</div>`).join('')
+      : '';
+
+    // ── Slot / publication detail ───────────────────────────────────────────
+    if(epas.ok){
+      const s = epas.slot;
+      document.getElementById('cdc-slot-detail').innerHTML = s ? `
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Slot</th><th>Active</th><th>Active PID</th><th>Restart LSN</th><th>Confirmed Flush LSN</th><th>Publication</th></tr></thead>
+          <tbody><tr>
+            <td><code>${escH(s.slot_name)}</code></td>
+            <td>${s.active ? '<span class="badge bg">yes</span>' : '<span class="badge br">no</span>'}</td>
+            <td>${s.active_pid ?? '—'}</td>
+            <td style="font-family:var(--mono);font-size:12px">${escH(s.restart_lsn||'—')}</td>
+            <td style="font-family:var(--mono);font-size:12px">${escH(s.confirmed_flush_lsn||'—')}</td>
+            <td>${epas.publication_exists ? '<span class="badge bg">present</span>' : '<span class="badge br">missing</span>'}</td>
+          </tr></tbody>
+        </table></div>` :
+        `<div class="warn-box">Slot <code>debezium_tu_slot</code> does not exist — Debezium has not started streaming (or the connector is down / never connected).</div>`;
+    } else {
+      document.getElementById('cdc-slot-detail').innerHTML = `<div class="error-box">Could not query EPAS: ${escH(epas.error||'')}</div>`;
+    }
+
+    // ── Source vs target counts ─────────────────────────────────────────────
+    if(epas.ok || whpg.ok){
+      const rows = [
+        {label:'credit_accounts',     src: epas.ok?epas.credit_accounts:null,      tgt: whpg.ok?whpg.credit_accounts?.count:null,      latest: whpg.ok?whpg.credit_accounts?.latest:''},
+        {label:'bureau_score_events', src: epas.ok?epas.bureau_score_events:null,  tgt: whpg.ok?whpg.bureau_score_events?.count:null,  latest: whpg.ok?whpg.bureau_score_events?.latest:''},
+      ];
+      document.getElementById('cdc-counts').innerHTML = `
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Table</th><th>Source (EPAS)</th><th>Target (WarehousePG)</th><th>Delta</th><th>Latest in target</th></tr></thead>
+          <tbody>${rows.map(r=>{
+            const delta = (r.src!=null && r.tgt!=null) ? (r.tgt - r.src) : null;
+            const deltaHtml = delta==null ? '—' : (delta===0
+              ? '<span class="badge bg">in sync</span>'
+              : `<span class="badge ${delta>0?'bb':'ba'}">${delta>0?'+':''}${delta}</span>`);
+            return `<tr>
+              <td><code>${escH(r.label)}</code></td>
+              <td style="font-family:var(--mono)">${r.src==null?'—':r.src.toLocaleString()}</td>
+              <td style="font-family:var(--mono)">${r.tgt==null?'—':r.tgt.toLocaleString()}</td>
+              <td>${deltaHtml}</td>
+              <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">${String(r.latest||'').slice(0,19)||'—'}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>`;
+    } else {
+      document.getElementById('cdc-counts').innerHTML = `<div class="error-box">Neither EPAS nor WarehousePG reachable — cannot compare row counts.</div>`;
+    }
+
+    // ── Live tickers ─────────────────────────────────────────────────────────
+    const ca = recent.credit_accounts || [];
+    document.getElementById('cdc-ca-stream').innerHTML = ca.length ? ca.map(r=>`<div class="stream-row">
+      <span class="s-ts">${String(r.ingested_ts||'').slice(11,19)}</span>
+      <span class="s-id">${r.account_id??'—'}</span>
+      <span class="s-val">$${parseFloat(r.outstanding_amount||0).toFixed(0)}</span>
+      <span class="s-tag">${r.dpd_bucket||'—'}</span>
+      <span class="s-dim">${r.product||''} · ${r.status||''} · lender ${r.lender_id??''}</span>
+    </div>`).join('') : `<span style="color:#5C6370">${recent.credit_accounts_error ? escH(recent.credit_accounts_error) : 'No rows yet'}</span>`;
+
+    const bse = recent.bureau_score_events || [];
+    document.getElementById('cdc-bse-stream').innerHTML = bse.length ? bse.map(r=>`<div class="stream-row">
+      <span class="s-ts">${String(r.score_ts||r.ingested_ts||'').slice(11,19)}</span>
+      <span class="s-id">${r.consumer_id??'—'}</span>
+      <span class="s-val">${r.score_value??'—'}</span>
+      <span class="s-tag">${r.score_trigger||''}</span>
+      <span class="s-dim">v${r.score_version??''}</span>
+    </div>`).join('') : `<span style="color:#5C6370">${recent.bureau_score_events_error ? escH(recent.bureau_score_events_error) : 'No rows yet'}</span>`;
+
+  } catch(e){
+    document.getElementById('cdc-errors').innerHTML = `<div class="error-box">CDC status request failed: ${escH(e.message||e)}</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SQL EDITOR — validate CDC (EPAS source <-> WarehousePG target)
+// ══════════════════════════════════════════════════════════════════════════════
+let sqlConnections = [];
+let sqlPresets = {};
+
+async function loadSqlEditor(){
+  try {
+    const [conns, presets] = await Promise.all([
+      api('/api/sqleditor/connections'),
+      api('/api/sqleditor/presets'),
+    ]);
+    sqlConnections = Array.isArray(conns) ? conns : [];
+    sqlPresets = presets || {};
+
+    const sel = document.getElementById('sqled-conn');
+    sel.innerHTML = sqlConnections.map(c =>
+      `<option value="${c.id}">${escH(c.label)} — ${escH(c.database)}</option>`
+    ).join('');
+
+    renderSqlPresetChips();
+  } catch(e){
+    document.getElementById('sqled-output').innerHTML =
+      `<div class="error-box">Could not load SQL Editor connections: ${escH(e.message||e)}</div>`;
+  }
+}
+
+function renderSqlPresetChips(){
+  const connId = document.getElementById('sqled-conn').value;
+  const list = sqlPresets[connId] || [];
+  document.getElementById('sqled-presets').innerHTML = list.map((p, i) =>
+    `<span class="preset-chip" onclick="useSqlPreset(${i})">${escH(p.name)}</span>`
+  ).join('');
+}
+
+function onSqlConnChange(){
+  renderSqlPresetChips();
+}
+
+function useSqlPreset(i){
+  const connId = document.getElementById('sqled-conn').value;
+  const list = sqlPresets[connId] || [];
+  const preset = list[i];
+  if(preset) document.getElementById('sqled-sql').value = preset.sql;
+}
+
+function clearSqlEditor(){
+  document.getElementById('sqled-sql').value = '';
+  document.getElementById('sqled-meta').textContent = '';
+  document.getElementById('sqled-output').innerHTML = '';
+  document.getElementById('sqled-results').innerHTML = '';
+}
+
+async function runSqlQuery(confirmDestructive=false){
+  const connId = document.getElementById('sqled-conn').value;
+  const sql = document.getElementById('sqled-sql').value.trim();
+  const metaEl = document.getElementById('sqled-meta');
+  const outEl  = document.getElementById('sqled-output');
+  const resEl  = document.getElementById('sqled-results');
+
+  if(!sql){
+    outEl.innerHTML = '<div class="error-box">Enter a SQL statement first.</div>';
+    return;
+  }
+
+  metaEl.textContent = 'Running…';
+  outEl.innerHTML = '';
+  resEl.innerHTML = '<div class="loading"><div class="spinner"></div>Running query…</div>';
+
+  const d = await api('/api/sqleditor/query', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({conn: connId, sql, confirm: confirmDestructive}),
+  });
+
+  if(!d.ok && d.needs_confirm){
+    resEl.innerHTML = '';
+    metaEl.textContent = '';
+    if(confirm(d.error + '\n\nRun it anyway?')){
+      return runSqlQuery(true);
+    } else {
+      outEl.innerHTML = `<div class="warn-box">Cancelled — query not run.</div>`;
+    }
+    return;
+  }
+
+  if(!d.ok){
+    metaEl.textContent = '';
+    resEl.innerHTML = '';
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Query failed')}</div>`;
+    return;
+  }
+
+  outEl.innerHTML = '';
+
+  if(d.columns && d.columns.length){
+    metaEl.textContent = `${d.row_count} row${d.row_count===1?'':'s'}${d.truncated?' (truncated to 500)':''} · ${d.elapsed}s`;
+    resEl.innerHTML = `<div class="sqled-results"><table class="tbl">
+      <thead><tr>${d.columns.map(c=>`<th>${escH(c)}</th>`).join('')}</tr></thead>
+      <tbody>${d.rows.map(r=>`<tr>${r.map(v=>`<td>${v===null?'<span style="color:var(--faint)">null</span>':escH(v)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  } else {
+    metaEl.textContent = `${d.affected ?? 0} row(s) affected · ${d.elapsed}s`;
+    resEl.innerHTML = `<div class="output-msg ok">✓ Statement executed successfully</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CREDIT RISK — MADlib in-database scoring
+// ══════════════════════════════════════════════════════════════════════════════
+async function madlibTrain(){
+  const spinner = document.getElementById('madlib-train-spinner');
+  const outEl = document.getElementById('madlib-train-output');
+  spinner.style.display = 'inline-flex';
+  outEl.innerHTML = '';
+
+  const d = await api('/api/madlib/train', {method: 'POST'});
+  spinner.style.display = 'none';
+
+  if(d.ok){
+    outEl.innerHTML = `<div class="output-msg ok">✓ Training complete</div>
+      <div class="log-box" style="margin-top:8px;height:140px">${escH(d.output||'')}</div>`;
+    showToast('✓ Model trained');
+  } else {
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Training failed')}</div>
+      ${d.output ? `<div class="log-box" style="margin-top:8px;height:140px">${escH(d.output)}</div>` : ''}`;
+  }
+  loadMadlib();
+}
+
+async function loadMadlib(){
+  try {
+    const status = await api('/api/madlib/status');
+
+    if(!status.ok){
+      document.getElementById('madlib-kpis').innerHTML = '';
+      document.getElementById('madlib-errors').innerHTML =
+        `<div class="error-box">Could not reach WarehousePG: ${escH(status.error||'unknown error')}</div>`;
+      return;
+    }
+
+    if(!status.model_exists){
+      document.getElementById('madlib-kpis').innerHTML = `
+        <div class="kpi"><div class="kpi-label">Feature Rows</div><div class="kpi-val blue">${(status.feature_rows||0).toLocaleString()}</div></div>
+        <div class="kpi"><div class="kpi-label">Model</div><div class="kpi-val red">Not trained</div></div>`;
+      document.getElementById('madlib-errors').innerHTML =
+        `<div class="warn-box">No model yet — click <b>Train / Retrain Model</b> above. You'll need both delinquent and non-delinquent accounts in <code>credit_accounts</code> for training to succeed (use Insert Test Rows + Simulate Update on the CDC tab if needed).</div>`;
+      document.getElementById('madlib-tiers').innerHTML = `<span style="color:var(--faint);font-size:12px">No model yet</span>`;
+      document.getElementById('madlib-top-risk').innerHTML = `<span style="color:var(--faint);font-size:12px">No model yet</span>`;
+      return;
+    }
+
+    document.getElementById('madlib-errors').innerHTML = '';
+    document.getElementById('madlib-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">Feature Rows</div><div class="kpi-val blue">${(status.feature_rows||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Scored Accounts</div><div class="kpi-val teal">${(status.scored_count||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Iterations</div><div class="kpi-val">${status.iterations??'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Log-Likelihood</div><div class="kpi-val">${status.log_likelihood!=null?parseFloat(status.log_likelihood).toFixed(1):'—'}</div></div>`;
+
+    const tiers = status.tiers || [];
+    const tierClr = {high:'var(--red)', medium:'var(--amber)', low:'var(--green)'};
+    const maxN = Math.max(...tiers.map(t=>t.count||0), 1);
+    document.getElementById('madlib-tiers').innerHTML = tiers.length ? `
+      <div class="mbar-wrap">${tiers.map(t=>`
+        <div class="mbar-row">
+          <span class="mbar-label" style="color:${tierClr[t.risk_tier]||'var(--muted)'}">${t.risk_tier}</span>
+          <div class="mbar"><div class="mbar-fill" style="width:${Math.round((t.count/maxN)*100)}%;background:${tierClr[t.risk_tier]||'var(--muted)'}"></div></div>
+          <span class="mbar-val">${t.count} · avg ${(t.avg_probability*100).toFixed(0)}%</span>
+        </div>`).join('')}</div>` :
+      `<span style="color:var(--faint);font-size:12px">No scored accounts yet</span>`;
+
+    const top = await api('/api/madlib/top_risk');
+    if(Array.isArray(top) && top.length){
+      const tierBadge = {high:'br', medium:'ba', low:'bg'};
+      document.getElementById('madlib-top-risk').innerHTML = `
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Account ID</th><th>Consumer ID</th><th>Probability</th><th>Tier</th><th>Product</th><th>Outstanding</th><th>DPD Bucket</th><th>Status</th></tr></thead>
+          <tbody>${top.map(r=>`<tr>
+            <td><code>${r.account_id}</code></td>
+            <td>${r.consumer_id}</td>
+            <td style="font-family:var(--mono);font-weight:500">${(r.probability_delinquent*100).toFixed(1)}%</td>
+            <td><span class="badge ${tierBadge[r.risk_tier]||'bt'}">${r.risk_tier}</span></td>
+            <td>${r.product||'—'}</td>
+            <td style="font-family:var(--mono)">$${parseFloat(r.outstanding_amount||0).toLocaleString()}</td>
+            <td>${r.dpd_bucket||'—'}</td>
+            <td>${r.status||'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    } else {
+      document.getElementById('madlib-top-risk').innerHTML = `<span style="color:var(--faint);font-size:12px">No scored accounts yet</span>`;
+    }
+  } catch(e){
+    document.getElementById('madlib-errors').innerHTML =
+      `<div class="error-box">MADlib status request failed: ${escH(e.message||e)}</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PXF — external table over ORC files on MinIO/S3 (federated query)
+// ══════════════════════════════════════════════════════════════════════════════
+async function pxfCreateTable(){
+  const outEl = document.getElementById('pxf-create-output');
+  outEl.innerHTML = '<div class="loading"><div class="spinner"></div>Creating external table…</div>';
+
+  const d = await api('/api/pxf/create_table', {method: 'POST'});
+
+  if(d.ok){
+    outEl.innerHTML = `<div class="output-msg ok">✓ External table ready</div>
+      <div class="log-box" style="margin-top:8px;height:120px">${escH(d.output||'')}</div>`;
+    showToast('✓ PXF external table created');
+  } else {
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Failed to create external table')}</div>
+      ${d.output ? `<div class="log-box" style="margin-top:8px;height:120px">${escH(d.output)}</div>` : ''}`;
+  }
+  loadPxf();
+}
+
+function pxfFormat(){
+  const el = document.getElementById('pxf-format');
+  return el ? el.value : 'orc';
+}
+
+async function loadPxf(){
+  try {
+    const fmt = pxfFormat();
+    const status = await api(`/api/pxf/status?format=${fmt}`);
+
+    if(!status.ok){
+      document.getElementById('pxf-kpis').innerHTML = '';
+      document.getElementById('pxf-errors').innerHTML =
+        `<div class="error-box">Could not reach WarehousePG: ${escH(status.error||'unknown error')}</div>`;
+      return;
+    }
+
+    const pdEl = document.getElementById('pxf-pushdown-default');
+    if(pdEl) pdEl.textContent = status.filter_pushdown || 'unknown';
+
+    if(!status.table_exists){
+      document.getElementById('pxf-kpis').innerHTML = `
+        <div class="kpi"><div class="kpi-label">External Table</div><div class="kpi-val red">Not created</div></div>
+        <div class="kpi"><div class="kpi-label">Filter Pushdown</div><div class="kpi-val">${status.filter_pushdown||'—'}</div></div>`;
+      document.getElementById('pxf-errors').innerHTML =
+        `<div class="warn-box">No external table for format "${fmt}" yet — click <b>Create / Refresh Both Tables</b> above. Requires the <code>pxf</code> extension and a PXF server profile named 'minio' already configured on the cluster.</div>`;
+      document.getElementById('pxf-recent').innerHTML = `<span style="color:var(--faint);font-size:12px">No table yet</span>`;
+      return;
+    }
+
+    if(status.query_error){
+      document.getElementById('pxf-kpis').innerHTML = `
+        <div class="kpi"><div class="kpi-label">External Table</div><div class="kpi-val green">Exists</div></div>
+        <div class="kpi"><div class="kpi-label">Filter Pushdown</div><div class="kpi-val">${status.filter_pushdown||'—'}</div></div>`;
+      document.getElementById('pxf-errors').innerHTML =
+        `<div class="error-box">Table exists but query failed — check the PXF/MinIO connection: ${escH(status.query_error)}</div>`;
+      return;
+    }
+
+    document.getElementById('pxf-errors').innerHTML = '';
+    document.getElementById('pxf-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">Total Rows</div><div class="kpi-val teal">${(status.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Symbols</div><div class="kpi-val blue">${status.symbols||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Earliest</div><div class="kpi-val" style="font-size:15px">${status.earliest||'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Latest</div><div class="kpi-val" style="font-size:15px">${status.latest||'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Count Query</div><div class="kpi-val" style="font-size:15px">${status.elapsed!=null?status.elapsed+'s':'—'}</div></div>
+      <div class="kpi"><div class="kpi-label">Filter Pushdown</div><div class="kpi-val" style="font-size:15px">${status.filter_pushdown||'—'}</div></div>`;
+
+    const rec = await api(`/api/pxf/recent?n=10&format=${fmt}`);
+    const recent = rec.rows || [];
+    document.getElementById('pxf-recent-meta').innerHTML = rec.sql
+      ? `<code>${escH(rec.sql)}</code>${rec.elapsed!=null?` &nbsp;·&nbsp; ${recent.length} rows in ${rec.elapsed}s`:''}`
+      : '';
+    if(recent.length){
+      document.getElementById('pxf-recent').innerHTML = `
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Symbol</th><th>Date</th><th>Open</th><th>High</th></tr></thead>
+          <tbody>${recent.map(r=>`<tr>
+            <td><code>${r.symbol||'—'}</code></td>
+            <td>${r.date||'—'}</td>
+            <td style="font-family:var(--mono)">${parseFloat(r.open||0).toFixed(2)}</td>
+            <td style="font-family:var(--mono)">${parseFloat(r.high||0).toFixed(2)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    } else {
+      document.getElementById('pxf-recent').innerHTML = `<span style="color:var(--faint);font-size:12px">No rows</span>`;
+    }
+
+    const symbols = await api(`/api/pxf/symbols?format=${fmt}`);
+    if(Array.isArray(symbols) && symbols.length){
+      const sel = document.getElementById('pxf-symbol');
+      const prev = sel.value;
+      sel.innerHTML = symbols.map(s=>`<option value="${escH(s)}">${escH(s)}</option>`).join('');
+      sel.value = symbols.includes(prev) ? prev : symbols[0];
+
+      [document.getElementById('pxf-bench-symbol'), document.getElementById('pxf-explain-symbol')].forEach(benchSel=>{
+        if(!benchSel) return;
+        const prevBench = benchSel.value;
+        benchSel.innerHTML = symbols.map(s=>`<option value="${escH(s)}">${escH(s)}</option>`).join('');
+        benchSel.value = symbols.includes(prevBench) ? prevBench : symbols[0];
+      });
+
+      loadPxfSeries();
+    }
+  } catch(e){
+    document.getElementById('pxf-errors').innerHTML =
+      `<div class="error-box">PXF status request failed: ${escH(e.message||e)}</div>`;
+  }
+}
+
+async function pxfBenchmark(pushdown){
+  const outEl = document.getElementById('pxf-bench-output');
+  const symbol = document.getElementById('pxf-bench-symbol').value;
+  const operator = document.getElementById('pxf-bench-operator').value;
+  outEl.innerHTML = `<div class="loading"><div class="spinner"></div>Running with pushdown ${pushdown?'ON':'OFF'}…</div>`;
+
+  const d = await api('/api/pxf/pushdown_benchmark', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({pushdown, symbol, operator, format: pxfFormat()}),
+  });
+
+  if(!d.ok){
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Benchmark failed')}</div>`;
+    return;
+  }
+
+  outEl.innerHTML = `<div class="output-msg ok">
+    ✓ Pushdown <b>${d.pushdown?'ON':'OFF'}</b> · symbol ${escH(d.operator)} <code>${escH(d.symbol||'')}</code> ·
+    ${d.row_count.toLocaleString()} row(s) matched · <b>${d.elapsed}s</b>
+  </div>`;
+}
+
+async function pxfExplain(){
+  const outEl = document.getElementById('pxf-explain-output');
+  const column = document.getElementById('pxf-explain-column').value;
+  const symbol = document.getElementById('pxf-explain-symbol').value;
+  const operator = document.getElementById('pxf-explain-operator').value;
+  outEl.innerHTML = '<div class="loading"><div class="spinner"></div>Running EXPLAIN…</div>';
+
+  const d = await api('/api/pxf/explain', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({column, symbol, operator, format: pxfFormat()}),
+  });
+
+  if(!d.ok){
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'EXPLAIN failed')}</div>`;
+    return;
+  }
+
+  const hintHtml = d.pushed_down_hint
+    ? `<div class="output-msg ok">✓ Plan includes a "Filter:" line — check below whether it's on the scan node itself (pushed down) or a separate step above it.</div>`
+    : `<div class="warn-box">No "Filter:" line found in the plan at all — with this operator/column, the predicate may not be applied as a distinct filter step, or is being handled differently. Compare against <code>=</code> to see the difference.</div>`;
+
+  outEl.innerHTML = `
+    <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:6px">${escH(d.sql)}</div>
+    ${hintHtml}
+    <div class="log-box" style="margin-top:8px;height:180px">${escH(d.plan.join('\n'))}</div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PXF — News & Sentiment (jsonb_events)
+// ══════════════════════════════════════════════════════════════════════════════
+async function pxfJsonbCreateTable(){
+  const outEl = document.getElementById('pxf-jsonb-create-output');
+  outEl.innerHTML = '<div class="loading"><div class="spinner"></div>Creating jsonb_events…</div>';
+
+  const d = await api('/api/pxf/jsonb/create_table', {method: 'POST'});
+
+  if(d.ok){
+    outEl.innerHTML = `<div class="output-msg ok">✓ jsonb_events ready</div>
+      <div class="log-box" style="margin-top:8px;height:120px">${escH(d.output||'')}</div>`;
+    showToast('✓ jsonb_events created');
+  } else {
+    outEl.innerHTML = `<div class="error-box">${escH(d.error||'Failed to create jsonb_events')}</div>
+      ${d.output ? `<div class="log-box" style="margin-top:8px;height:120px">${escH(d.output)}</div>` : ''}`;
+  }
+  loadPxfJsonb();
+}
+
+async function loadPxfJsonb(){
+  try {
+    const status = await api('/api/pxf/jsonb/status');
+
+    if(!status.ok){
+      document.getElementById('pxf-jsonb-kpis').innerHTML = '';
+      document.getElementById('pxf-jsonb-errors').innerHTML =
+        `<div class="error-box">Could not reach WarehousePG: ${escH(status.error||'unknown error')}</div>`;
+      return;
+    }
+
+    if(!status.table_exists){
+      document.getElementById('pxf-jsonb-kpis').innerHTML = `
+        <div class="kpi"><div class="kpi-label">External Table</div><div class="kpi-val red">Not created</div></div>`;
+      document.getElementById('pxf-jsonb-errors').innerHTML =
+        `<div class="warn-box">No jsonb_events table yet — click <b>Create / Refresh jsonb_events</b> above.</div>`;
+      document.getElementById('pxf-jsonb-recent').innerHTML = '';
+      return;
+    }
+
+    if(status.query_error){
+      document.getElementById('pxf-jsonb-kpis').innerHTML = `
+        <div class="kpi"><div class="kpi-label">External Table</div><div class="kpi-val green">Exists</div></div>`;
+      document.getElementById('pxf-jsonb-errors').innerHTML =
+        `<div class="error-box">Table exists but query failed: ${escH(status.query_error)}</div>`;
+      return;
+    }
+
+    document.getElementById('pxf-jsonb-errors').innerHTML = '';
+    document.getElementById('pxf-jsonb-kpis').innerHTML = `
+      <div class="kpi"><div class="kpi-label">Total Rows</div><div class="kpi-val teal">${(status.total||0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Symbols</div><div class="kpi-val blue">${status.symbols||0}</div></div>
+      <div class="kpi"><div class="kpi-label">Query Time</div><div class="kpi-val" style="font-size:15px">${status.elapsed!=null?status.elapsed+'s':'—'}</div></div>`;
+
+    const rec = await api('/api/pxf/jsonb/recent?n=20');
+    const rows = rec.rows || [];
+    document.getElementById('pxf-jsonb-meta').innerHTML = rec.sql
+      ? `<code>${escH(rec.sql)}</code>${rec.elapsed!=null?` &nbsp;·&nbsp; ${rows.length} rows in ${rec.elapsed}s`:''}`
+      : '';
+    if(rows.length){
+      const sentClr = {positive:'bg', negative:'br', neutral:'ba'};
+      document.getElementById('pxf-jsonb-recent').innerHTML = `
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Symbol</th><th>Date</th><th>Headline</th><th>Sentiment</th><th>Close</th></tr></thead>
+          <tbody>${rows.map(r=>`<tr>
+            <td><code>${r.symbol||'—'}</code></td>
+            <td style="font-family:var(--mono);font-size:11px">${r.date||'—'}</td>
+            <td>${escH(r.headline||'')}</td>
+            <td><span class="badge ${sentClr[(r.sentiment||'').toLowerCase()]||'bt'}">${r.sentiment||'—'}</span></td>
+            <td style="font-family:var(--mono)">${r.close!=null?parseFloat(r.close).toFixed(2):'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    } else {
+      document.getElementById('pxf-jsonb-recent').innerHTML = `<span style="color:var(--faint);font-size:12px">No rows</span>`;
+    }
+  } catch(e){
+    document.getElementById('pxf-jsonb-errors').innerHTML =
+      `<div class="error-box">jsonb_events status request failed: ${escH(e.message||e)}</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MinIO bucket browser
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadMinioBuckets(){
+  try {
+    const d = await api('/api/minio/buckets');
+    if(!d.ok){
+      document.getElementById('minio-errors').innerHTML =
+        `<div class="error-box">${escH(d.error||'Could not list buckets')}</div>`;
+      document.getElementById('minio-objects').innerHTML = '';
+      return;
+    }
+    document.getElementById('minio-errors').innerHTML = '';
+    const sel = document.getElementById('minio-bucket');
+    sel.innerHTML = d.buckets.map(b=>`<option value="${escH(b.name)}">${escH(b.name)}</option>`).join('');
+    if(d.buckets.length){
+      loadMinioObjects();
+    } else {
+      document.getElementById('minio-objects').innerHTML = `<span style="color:var(--faint);font-size:12px">No buckets found</span>`;
+    }
+  } catch(e){
+    document.getElementById('minio-errors').innerHTML =
+      `<div class="error-box">MinIO request failed: ${escH(e.message||e)}</div>`;
+  }
+}
+
+async function loadMinioObjects(){
+  const bucket = document.getElementById('minio-bucket').value;
+  const prefix = document.getElementById('minio-prefix').value;
+  if(!bucket) return;
+
+  // Hide any stale preview from a previous bucket/listing — it no longer
+  // corresponds to what's about to be shown below.
+  document.getElementById('minio-preview').style.display = 'none';
+
+  document.getElementById('minio-objects').innerHTML = '<div class="loading"><div class="spinner"></div>Listing objects…</div>';
+
+  const d = await api(`/api/minio/objects?bucket=${encodeURIComponent(bucket)}&prefix=${encodeURIComponent(prefix)}`);
+
+  if(!d.ok){
+    document.getElementById('minio-objects').innerHTML = `<div class="error-box">${escH(d.error||'Could not list objects')}</div>`;
+    return;
+  }
+
+  if(!d.objects.length){
+    document.getElementById('minio-objects').innerHTML = `<span style="color:var(--faint);font-size:12px">No objects${prefix?` matching prefix "${escH(prefix)}"`:''}</span>`;
+    return;
+  }
+
+  const fmtSize = (n)=>{
+    if(n < 1024) return n + ' B';
+    if(n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+    return (n/(1024*1024)).toFixed(1) + ' MB';
+  };
+
+  document.getElementById('minio-objects').innerHTML = `
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Key</th><th>Size</th><th>Last Modified</th><th></th></tr></thead>
+      <tbody>${d.objects.map(o=>`<tr>
+        <td><code>${escH(o.key)}</code></td>
+        <td style="font-family:var(--mono);color:var(--muted)">${fmtSize(o.size)}</td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">${String(o.last_modified||'').slice(0,19)}</td>
+        <td><button class="run-btn secondary" style="padding:3px 10px;font-size:11px" onclick="previewMinioObject('${escH(bucket)}','${escH(o.key)}')">👁 Preview</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${d.truncated ? '<div style="font-size:11px;color:var(--faint);margin-top:6px">Showing first 1000 objects — narrow with a prefix to see more.</div>' : ''}`;
+}
+
+async function previewMinioObject(bucket, key){
+  const wrap = document.getElementById('minio-preview');
+  const keyEl = document.getElementById('minio-preview-key');
+  const box = document.getElementById('minio-preview-box');
+  wrap.style.display = 'block';
+  keyEl.textContent = `${bucket} / ${key}`;
+  box.textContent = 'Loading…';
+
+  const d = await api(`/api/minio/preview?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(key)}`);
+
+  if(!d.ok){
+    box.textContent = `Error: ${d.error||'preview failed'}`;
+    return;
+  }
+  // Confirm what was actually previewed matches what was clicked, in case
+  // of any ambiguity — echoes the server's own bucket/key back.
+  keyEl.textContent = `${d.bucket} / ${d.key}`;
+  box.textContent = d.preview;
+}
+
+async function loadPxfSeries(){
+  const symbol = document.getElementById('pxf-symbol').value;
+  if(!symbol) return;
+
+  try {
+    const d = await api(`/api/pxf/series?symbol=${encodeURIComponent(symbol)}&n=180&format=${pxfFormat()}`);
+    const rows = d.rows || [];
+    const metaEl = document.getElementById('pxf-series-meta');
+    if(metaEl) metaEl.innerHTML = d.sql
+      ? `<code>${escH(d.sql)}</code>${d.elapsed!=null?` &nbsp;·&nbsp; ${rows.length} rows in ${d.elapsed}s`:''}`
+      : '';
+
+    if(!rows.length){
+      document.getElementById('pxf-series-table').innerHTML = `<span style="color:var(--faint);font-size:12px">No rows for ${escH(symbol)}</span>`;
+      return;
+    }
+
+    mkChart('ch-pxf-price', {
+      type: 'line',
+      data: {
+        labels: rows.map(r=>r.date),
+        datasets: [{
+          label: symbol, data: rows.map(r=>parseFloat(r.close)),
+          borderColor: '#0F6E5A', backgroundColor: 'rgba(15,110,90,.1)',
+          tension: .2, fill: true, pointRadius: 0,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {legend: {display: false}},
+        scales: {
+          x: {grid: {display: false}, ticks: {maxTicksLimit: 10}},
+          y: {grid: {color: 'rgba(0,0,0,.05)'}},
+        },
+      },
+    });
+
+    const last20 = rows.slice(-20).reverse();
+    document.getElementById('pxf-series-table').innerHTML = `
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead>
+        <tbody>${last20.map(r=>`<tr>
+          <td>${r.date||'—'}</td>
+          <td style="font-family:var(--mono)">${parseFloat(r.open||0).toFixed(2)}</td>
+          <td style="font-family:var(--mono)">${parseFloat(r.high||0).toFixed(2)}</td>
+          <td style="font-family:var(--mono)">${parseFloat(r.low||0).toFixed(2)}</td>
+          <td style="font-family:var(--mono);color:var(--green)">${parseFloat(r.close||0).toFixed(2)}</td>
+          <td style="font-family:var(--mono);color:var(--muted)">${(+r.volume||0).toLocaleString()}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+  } catch(e){
+    document.getElementById('pxf-series-table').innerHTML =
+      `<div class="error-box">Failed to load series: ${escH(e.message||e)}</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PIPELINE TAB — YAML panels
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadPipeline(){
+  try {
+    const [e, i] = await Promise.all([
+      api('/api/ecom/flowserver_sql'),
+      api('/api/iot/flowserver_sql'),
+    ]);
+    document.getElementById('ecom-yaml-panel').innerHTML = sqlPanel(e.yaml||'', 'ecommerce-orders.yaml', true);
+    document.getElementById('iot-yaml-panel').innerHTML  = sqlPanel(i.yaml||'',  'iot-sensors-csv.yaml',  true);
+  } catch(e){}
+
+  document.getElementById('schema-panel').innerHTML = sqlPanel(`-- E-Commerce Orders
+CREATE TABLE public.ecommerce_orders (
+    order_id        VARCHAR(50) PRIMARY KEY,
+    timestamp       TIMESTAMP NOT NULL,
+    customer_id     VARCHAR(20),
+    customer_name   VARCHAR(100),
+    customer_email  VARCHAR(100),
+    product_id      VARCHAR(20),
+    product_name    VARCHAR(200),
+    category        VARCHAR(50),
+    quantity        INTEGER,
+    unit_price      DECIMAL(10,2),
+    total_price     DECIMAL(10,2),
+    payment_method  VARCHAR(50),
+    country         VARCHAR(50),
+    city            VARCHAR(100),
+    revenue_bucket  VARCHAR(20),    -- ← FlowServer computed
+    is_bulk_order   BOOLEAN,         -- ← FlowServer computed
+    processing_time TIMESTAMP        -- ← FlowServer computed
+) DISTRIBUTED BY (order_id);
+
+-- IoT Sensor Readings
+CREATE TABLE public.iot_sensor_readings (
+    id            SERIAL,
+    timestamp     TIMESTAMP NOT NULL,
+    sensor_id     VARCHAR(20),
+    location      VARCHAR(100),
+    temperature   DECIMAL(5,2),
+    humidity      DECIMAL(5,2),
+    pressure      DECIMAL(6,2),
+    battery_level DECIMAL(5,2),
+    status        VARCHAR(20),
+    alert_level   INTEGER,         -- ← FlowServer computed
+    building      VARCHAR(50),     -- ← FlowServer computed
+    floor         INTEGER,         -- ← FlowServer computed
+    temperature_f DECIMAL(5,2),    -- ← FlowServer computed
+    comfort_index VARCHAR(20),     -- ← FlowServer computed
+    battery_status VARCHAR(20),    -- ← FlowServer computed
+    processed_at  TIMESTAMP,       -- ← FlowServer computed
+    data_quality  VARCHAR(20)      -- ← FlowServer computed
+) DISTRIBUTED BY (sensor_id);`, 'WarehousePG schema — 02_create_tables.sql');
+
+  document.getElementById('fsconf-panel').innerHTML = sqlPanel(`{
+    "Host": "",
+    "Port": 6060,
+    "Gpfdist": {
+        "Host": "",
+        "Port": 6070,
+        "ReuseTables": true
+    },
+    "Prometheus": {
+        "Host": "",
+        "Port": 9080,
+        "MetricsPath": "/flow_metrics"
+    },
+    "DebugPort": 6080,
+    "Logging": {
+        "SplitLogByJob": false,
+        "FrontendLevel": "debug",
+        "BackendLevel": "info"
+    }
+}`, 'configs/flow_server.json');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DB SETUP TAB
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadSetup(){
+  // Full run-order commands block
+  document.getElementById('setup-commands-panel').innerHTML = sqlPanel(
+`# ── 1. Database (run as gpadmin against postgres DB) ──────────────────────
+psql -h localhost -p 5432 -U gpadmin -d postgres \\
+     -f sql/01_create_database.sql
+
+# ── 2. Tables (run against streaming_demo DB) ────────────────────────────────────
+psql -h localhost -p 5432 -U gpadmin -d streaming_demo \\
+     -f sql/02_create_tables.sql
+
+# ── 3. Verify ───────────────────────────────────────────────────────────────
+psql -h localhost -p 5432 -U gpadmin -d streaming_demo \\
+     -f sql/03_verify_setup.sql
+
+# ── 4. Kafka topics ─────────────────────────────────────────────────────────
+kafka-topics --create --topic ecommerce-orders \\
+    --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1 \\
+    --command-config configs/kafka-client.properties
+
+kafka-topics --create --topic iot-sensors-csv \\
+    --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1 \\
+    --command-config configs/kafka-client.properties
+
+# ── 5. Build Go generators ───────────────────────────────────────────────────
+cd generators
+go build -o order-generator order-generator.go
+go build -o iot-generator   iot-generator.go
+cd ..
+
+# ── 6. Submit FlowServer jobs (FlowServer must be running first) ─────────────
+flowcli --host localhost --port 6060 submit jobs/ecommerce-orders.yaml
+flowcli --host localhost --port 6060 submit jobs/iot-sensors-csv.yaml
+
+# ── 7. Start everything ──────────────────────────────────────────────────────
+./scripts/start-demo.sh --ecom-rate 50 --iot-rate 20`,
+    'Full setup — run in order', true);
+
+  // Fetch and render each SQL file from the API
+  try {
+    const [r01, r02, r03] = await Promise.all([
+      api('/api/sql/01_create_database.sql'),
+      api('/api/sql/02_create_tables.sql'),
+      api('/api/sql/03_verify_setup.sql'),
+    ]);
+    document.getElementById('sql-01').innerHTML = sqlPanel(r01.content||'', 'sql/01_create_database.sql', true);
+    document.getElementById('sql-02').innerHTML = sqlPanel(r02.content||'', 'sql/02_create_tables.sql',   true);
+    document.getElementById('sql-03').innerHTML = sqlPanel(r03.content||'', 'sql/03_verify_setup.sql',    false);
+  } catch(e){
+    ['sql-01','sql-02','sql-03'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.innerHTML='<div class="error-box">Could not load SQL file from API</div>';
+    });
+  }
+
+  // Kafka topics commands — with SASL auth
+  document.getElementById('kafka-topics-panel').innerHTML = sqlPanel(
+`# 1. Create configs/kafka-client.properties (git-ignored, never committed)
+# Copy from the template and fill in your credentials:
+cp configs/kafka-client.properties.template configs/kafka-client.properties
+# Then edit the file and set your username and password.
+
+# Or let setup.sh write it for you:
+./scripts/setup.sh --kafka-user kafka --kafka-password YOUR_PASSWORD
+
+# 2. Create topics — always pass --command-config
+kafka-topics --create --topic ecommerce-orders \\
+    --bootstrap-server localhost:9092 \\
+    --partitions 3 --replication-factor 1 \\\\
+    --command-config configs/kafka-client.properties \\
+    --command-config configs/kafka-client.properties
+
+kafka-topics --create --topic iot-sensors-csv \\
+    --bootstrap-server localhost:9092 \\
+    --partitions 3 --replication-factor 1 \\\\
+    --command-config configs/kafka-client.properties \\
+    --command-config configs/kafka-client.properties
+
+# 3. Verify
+kafka-topics --list --bootstrap-server localhost:9092 \\
+    --command-config configs/kafka-client.properties \\
+    | grep -E 'ecommerce|iot'
+
+kafka-topics --describe --topic ecommerce-orders \\
+    --bootstrap-server localhost:9092 \\
+    --command-config configs/kafka-client.properties`,
+    'Kafka topics — SASL auth', true);
+
+  // Build commands
+  document.getElementById('build-panel').innerHTML = sqlPanel(
+`# From the repo root
+cd generators
+
+# Tidy dependencies (first time only)
+go mod tidy
+
+# Build both generators
+go build -o order-generator order-generator.go
+go build -o iot-generator   iot-generator.go
+
+cd ..
+
+# Test — send 10 messages each to verify Kafka connectivity
+./generators/order-generator -rate 5 -max-messages 10
+./generators/iot-generator   -rate 5 -max-messages 10`,
+    'Build Go generators', true);
+
+  // Submit jobs commands
+  document.getElementById('submit-jobs-panel').innerHTML = sqlPanel(
+`# FlowServer must be running before submitting jobs:
+./flowserver -c configs/flow_server.json &
+
+# Submit jobs (registers the YAML with FlowServer — do ONCE per environment)
+flowcli --host localhost --port 6060 submit jobs/ecommerce-orders.yaml
+flowcli --host localhost --port 6060 submit jobs/iot-sensors-csv.yaml
+
+# List all submitted jobs
+flowcli --host localhost --port 6060 list
+
+# After submitting, use the ⚙ Control tab to start/stop jobs from the browser.
+# Or via CLI:
+flowcli --host localhost --port 6060 start ecommerce-orders
+flowcli --host localhost --port 6060 start iot-sensors-csv
+
+# Check job status
+flowcli --host localhost --port 6060 list
+flowcli --host localhost --port 6060 monitor ecommerce-orders`,
+    'FlowServer job submit commands', true);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  POLL LOOP
+// ══════════════════════════════════════════════════════════════════════════════
+let pollCount = 0;
+async function tick(){
+  pollCount++;
+  await loadStatus();
+  await loadTickers();
+  if(pollCount % 3 === 1){
+    await Promise.all([loadEcom(), loadEcomRecent(), loadIot(), loadCdc(), loadCdcJobs(), loadClickHouse(), loadMadlib(), loadCdcGeneratorStatus()]);
+  }
+}
+
+(async () => {
+  loadPipeline();
+  loadSetup();
+  loadSqlEditor();
+  loadPxf();
+  loadPxfJsonb();
+  loadMinioBuckets();
+  await tick();
+  setInterval(tick, 2000);
+
+  // Resume progress display if a batch load was already running (e.g. page refresh)
+  try {
+    const bs = await api('/api/iot/batch-load/status');
+    if(bs.running){
+      document.getElementById('batch-dot').className = 'live-dot active';
+      document.getElementById('batch-progress-wrap').style.display = 'block';
+      batchPollTimer = setInterval(pollBatchLoad, 1000);
+      pollBatchLoad();
+    }
+  } catch(e){}
+})();
+</script>
+</body>
+</html>
+
+

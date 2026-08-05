@@ -1,0 +1,11 @@
+# Kafka client authentication config
+# Used by kafka-topics and other CLI tools via --command-config
+#
+# Fill in your credentials and copy to configs/kafka-client.properties
+# (this file is git-ignored — never commit credentials)
+
+security.protocol=SASL_PLAINTEXT
+sasl.mechanism=PLAIN
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required \
+  username="kafka" \
+  password="your-kafka-password-here";

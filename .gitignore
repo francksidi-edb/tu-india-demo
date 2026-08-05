@@ -1,0 +1,17 @@
+# Kafka credentials — never commit
+configs/kafka-client.properties
+configs/kafka.password
+configs/kafka.password
+
+# Python
+__pycache__/
+*.pyc
+
+# Go binaries
+generators/order-generator
+generators/iot-generator
+
+# Runtime
+/tmp/flowserver-demo/
+*.log
+*.pid

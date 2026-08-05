@@ -1,0 +1,69 @@
+# FlowServer job: tu.oltp.bureau_score_events -> WarehousePG
+# Insert-only, same reasoning as credit_inquiries — a score event is a new
+# computation, not an update to a prior one.
+#
+# Submit/run:
+#   flowcli submit --name tu_load_bureau_scores flowserver/load_bureau_score_events.yaml
+#   flowcli start   tu_load_bureau_scores
+#   flowcli monitor tu_load_bureau_scores
+
+version: v1.0
+source:
+  kafka:
+    brokers:
+      - 172.31.26.242:9092
+    topic: tu.oltp.bureau_score_events
+    read_workers: 0
+    value:
+      json:
+        column:
+          name: raw
+          type: jsonb
+    metadata:
+      json:
+        column:
+          name: kafka_meta
+          type: jsonb
+    control:
+      consistency: exactly-once
+      fallback_offset: earliest
+    task:
+      batch_size:
+        interval_ms: 1000
+        max_count: 5000
+
+target:
+  database:
+    host: localhost
+    port: 5432
+    user: gpadmin
+    password: admin
+    dbname: tu
+    staging_schema: tu_bureau_demo
+    error_limit: 100
+    tables:
+      - table: bureau_score_events
+        schema: tu_bureau_demo
+        mode:
+          insert: {}
+        mapping:
+          score_event_id: (raw->>'score_event_id')::bigint
+          consumer_id: (raw->>'consumer_id')::bigint
+          score_value: (raw->>'score_value')::int
+          score_version: raw->>'score_version'
+          score_trigger: raw->>'score_trigger'
+          score_ts: TO_TIMESTAMP((raw->>'score_ts')::bigint / 1000.0)
+          ingested_ts: now()
+
+      - table: lender_feed_landing
+        schema: tu_bureau_demo
+        mode:
+          insert: {}
+        mapping:
+          feed_id: (kafka_meta->>'offset')::bigint
+          lender_id: "0"          # score events aren't lender-scoped; 0 = bureau-internal
+          source_topic: kafka_meta->>'topic'
+          payload_type: "'score_refresh'"
+          feed_channel: "'cdc'"    # Debezium/CDC-sourced from EPAS, distinct from direct-stream 'streaming'
+          event_ts: TO_TIMESTAMP((raw->>'score_ts')::bigint / 1000.0)
+          ingested_ts: now()

@@ -1,0 +1,20 @@
+{
+    "Host": "",
+    "Port": 6060,
+    "Gpfdist": {
+        "Host": "",
+        "Port": 6070,
+        "ReuseTables": true
+    },
+    "Prometheus": {
+        "Host": "",
+        "Port": 9080,
+        "MetricsPath": "/flow_metrics"
+    },
+    "DebugPort": 6080,
+    "Logging": {
+        "SplitLogByJob": false,
+        "FrontendLevel": "debug",
+        "BackendLevel": "info"
+    }
+}

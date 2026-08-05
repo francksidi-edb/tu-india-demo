@@ -1,0 +1,2147 @@
+#!/usr/bin/env python3
+"""
+WHPG Real Streaming Demo — Unified Dashboard API
+Serves metrics, live tickers, AND process/job control via HTTP.
+
+Usage:
+  python3 dashboards/api.py [options]
+
+Options:
+  --pg-host HOST      PostgreSQL host        (default: localhost)
+  --pg-port PORT      PostgreSQL port        (default: 5432)
+  --pg-user USER      PostgreSQL user        (default: gpadmin)
+  --pg-password PASS  PostgreSQL password    (default: )
+  --pg-dbname DB      PostgreSQL database    (default: streaming_demo)
+  --kafka BROKER      Kafka broker           (default: localhost:9092)
+  --app-port PORT     HTTP port for this API (default: 5055)
+  --repo-dir DIR      Repo root directory    (default: auto-detect)
+"""
+
+import argparse
+import base64
+import json
+import os
+import random
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+import psycopg2
+import psycopg2.extras
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+
+app = Flask(__name__, static_folder=".")
+CORS(app)
+
+# ── Config (filled in by CLI args / env) ──────────────────────────────────────
+DB_CONFIG = {
+    "host":     os.environ.get("PGHOST",     "localhost"),
+    "port":     int(os.environ.get("PGPORT", 5432)),
+    "user":     os.environ.get("PGUSER",     "gpadmin"),
+    "password": os.environ.get("PGPASSWORD", ""),
+    "database": os.environ.get("PGDATABASE", "streaming_demo"),
+}
+KAFKA_BROKER  = os.environ.get("KAFKA_BROKER", "localhost:9092")
+REPO_DIR      = Path(__file__).resolve().parent.parent   # dashboards/../
+PID_DIR       = Path("/tmp/flowserver-demo")
+LOG_DIR       = PID_DIR / "logs"
+FS_SERVER_URL = "http://localhost:6060"
+
+# ── Generator runtime state ───────────────────────────────────────────────────
+GEN_CONFIG = {
+    "ecom_rate":  50,
+    "iot_rate":   20,
+    "ecom_total": 0,
+    "iot_total":  0,
+}
+
+# ── SQL Editor: connection presets (EPAS source + WarehousePG target) ────────
+# Credentials come from env vars so nothing sensitive is hardcoded in the repo.
+SQL_CONN_PRESETS = {
+    "epas_tu": {
+        "label":    "EPAS — tu (5444)",
+        "host":     os.environ.get("EPAS_HOST", "localhost"),
+        "port":     int(os.environ.get("EPAS_PORT", 5444)),
+        "user":     os.environ.get("EPAS_USER", "enterprisedb"),
+        "password": os.environ.get("EPAS_PASSWORD", "admin"),
+        "database": os.environ.get("EPAS_DB", "tu"),
+    },
+    "whpg_tu": {
+        "label":    "WarehousePG — tu (5432)",
+        "host":     os.environ.get("WHPG_TU_HOST", "localhost"),
+        "port":     int(os.environ.get("WHPG_TU_PORT", 5432)),
+        "user":     os.environ.get("WHPG_TU_USER", "gpadmin"),
+        "password": os.environ.get("WHPG_TU_PASSWORD", "admin"),
+        "database": os.environ.get("WHPG_TU_DB", "tu"),
+    },
+    "whpg_streaming_demo": {
+        "label":    "WarehousePG — streaming_demo (5432)",
+        "host":     DB_CONFIG["host"],
+        "port":     DB_CONFIG["port"],
+        "user":     DB_CONFIG["user"],
+        "password": DB_CONFIG["password"],
+        "database": DB_CONFIG["database"],
+    },
+}
+
+# Any query containing these keywords requires an explicit confirm=true from the client.
+DESTRUCTIVE_SQL_RE = re.compile(
+    r"\b(DROP|DELETE|TRUNCATE|ALTER|UPDATE|INSERT|GRANT|REVOKE|CREATE)\b",
+    re.IGNORECASE,
+)
+
+# Quick-start queries shown as buttons per connection, to validate the CDC pipeline
+# (Postgres EPAS -> Debezium -> Kafka -> FlowServer -> WarehousePG) without typing SQL.
+SQL_EDITOR_PRESET_QUERIES = {
+    "epas_tu": [
+        {"name": "Replication slot status",
+         "sql": "SELECT slot_name, active, active_pid, restart_lsn, confirmed_flush_lsn\nFROM pg_replication_slots;"},
+        {"name": "Publication tables",
+         "sql": "SELECT pubname, schemaname, tablename\nFROM pg_publication_tables\nWHERE pubname = 'debezium_tu_publication';"},
+        {"name": "Source row counts",
+         "sql": "SELECT 'credit_accounts' AS tbl, COUNT(*) FROM oltp.credit_accounts\nUNION ALL\nSELECT 'bureau_score_events', COUNT(*) FROM oltp.bureau_score_events;"},
+        {"name": "Recent source rows",
+         "sql": "SELECT * FROM oltp.credit_accounts\nORDER BY event_ts DESC\nLIMIT 20;"},
+    ],
+    "whpg_tu": [
+        {"name": "Target row counts",
+         "sql": "SELECT 'credit_accounts' AS tbl, COUNT(*) FROM tu_bureau_demo.credit_accounts\nUNION ALL\nSELECT 'bureau_score_events', COUNT(*) FROM tu_bureau_demo.bureau_score_events;"},
+        {"name": "Recent target rows",
+         "sql": "SELECT * FROM tu_bureau_demo.credit_accounts\nORDER BY event_ts DESC\nLIMIT 20;"},
+    ],
+    "whpg_streaming_demo": [
+        {"name": "Ecommerce row count", "sql": "SELECT COUNT(*) FROM public.ecommerce_orders;"},
+        {"name": "IoT row count",       "sql": "SELECT COUNT(*) FROM public.iot_sensor_readings;"},
+    ],
+}
+
+# ── IoT gpfdist batch loader ──────────────────────────────────────────────────
+# Separate from the Kafka/FlowServer streaming path: this writes CSV files to
+# disk and uses WarehousePG's gpfdist external-table protocol to bulk load them
+# directly into public.iot_sensor_readings, for demoing high-throughput batch
+# ingestion alongside the streaming demo.
+GPFDIST_HOST      = os.environ.get("GPFDIST_HOST", "localhost")
+# NOTE: FlowServer's own built-in gpfdist-protocol listener (for its Kafka streaming
+# jobs) occupies port 6070 by default — see configs/flow_server.json's "Gpfdist" block.
+# The standalone batch loader below needs its OWN port, so it defaults to 6071.
+# Override either with GPFDIST_PORT if 6071 is also taken in your environment.
+GPFDIST_PORT      = int(os.environ.get("GPFDIST_PORT", 6071))
+GPFDIST_BIN_ENV   = os.environ.get("GPFDIST_BIN", "")
+BATCH_LOAD_DIR    = Path(os.environ.get("BATCH_LOAD_DIR", "/tmp/gpfdist-iot-batch"))
+BATCH_LOAD_STATE  = {
+    "running": False, "total": 0, "loaded": 0, "error": None,
+    "started_at": None, "finished_at": None, "stop_requested": False,
+    "stage": None,   # "generating" | "loading" | "done"
+    "script_path": None, "generator_pid": None,
+}
+BATCH_LOAD_LOCK   = threading.Lock()
+
+# ── CDC FlowServer jobs (Postgres EPAS -> Debezium -> Kafka -> WarehousePG) ───
+# Job names follow the `tu_load_<table>` convention used when these were first
+# submitted manually (`flowcli submit --name tu_load_credit_accounts ...`).
+CDC_JOBS = {
+    "tu_load_credit_accounts":     "jobs/load_credit_accounts.yaml",
+    "tu_load_bureau_score_events": "jobs/load_bureau_score_events.yaml",
+    "tu_load_credit_inquiries":    "jobs/load_credit_inquiries.yaml",
+}
+
+
+def pick_dpd_and_status(outstanding_amount, sanctioned_amount, product):
+    """
+    Choose dpd_bucket/status so delinquency actually correlates with the
+    features the MADlib model uses (utilization ratio, product) — instead of
+    independent random draws, which produce a model that just learns the
+    overall base rate and can't separate accounts into meaningful risk tiers.
+    Higher utilization (and revolving products like credit_card/personal_loan)
+    push probability of delinquency up. Mirrors the same logic in
+    credit_bureau_generator.py so both paths produce consistent signal.
+    """
+    utilization = min(float(outstanding_amount) / max(float(sanctioned_amount), 1.0), 1.5)
+    p_delinquent = 0.05 + 0.55 * min(utilization, 1.0)
+    if product in ("credit_card", "personal_loan"):
+        p_delinquent += 0.08
+    p_delinquent = min(max(p_delinquent, 0.02), 0.95)
+
+    if random.random() < p_delinquent:
+        dpd_bucket = random.choices(["60", "90+"], weights=[0.55, 0.45])[0]
+        status = random.choices(["delinquent", "active"], weights=[0.75, 0.25])[0]
+    else:
+        dpd_bucket = random.choices(["current", "30"], weights=[0.8, 0.2])[0]
+        status = random.choices(["active", "closed"], weights=[0.85, 0.15])[0]
+    return dpd_bucket, status
+
+
+# ── MADlib credit risk scoring (in-database ML, no data export) ──────────────
+MADLIB_SQL_PATH = Path(os.environ.get(
+    "MADLIB_SQL_PATH", str(Path(__file__).resolve().parent.parent / "sql" / "04_madlib_credit_risk.sql")))
+
+# ── Continuous CDC generator (writes directly to EPAS; Debezium does the rest) ──
+CDC_GEN_SCRIPT_ENV = "CDC_GEN_SCRIPT"
+CDC_GEN_LOG_NAME   = "credit-bureau-generator"
+CDC_GEN_DEFAULTS = {
+    "new_accounts_rate": 2.0,   # per minute
+    "update_rate":       3.0,   # per minute
+    "score_rate":        2.0,   # per minute
+    "interval":          5.0,   # seconds between ticks
+}
+
+
+def find_cdc_generator_script() -> Path:
+    """Locate credit_bureau_generator.py — checked in a few common repo locations."""
+    candidates = [
+        os.environ.get(CDC_GEN_SCRIPT_ENV, ""),
+        str(REPO_DIR / "generators" / "credit_bureau_generator.py"),
+        str(REPO_DIR / "scripts" / "credit_bureau_generator.py"),
+        str(REPO_DIR / "dashboards" / "credit_bureau_generator.py"),
+        str(Path(__file__).resolve().parent / "credit_bureau_generator.py"),
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return Path(c)
+    return None
+
+# ── ClickHouse (real-time mirror of ecommerce-orders via its own Kafka consumer) ──
+# Uses the HTTP interface (port 8123 by default) — stdlib urllib only, no extra deps.
+# Native TCP port (9094 in this environment) is only used by clickhouse-client, not this API.
+CLICKHOUSE_HOST      = os.environ.get("CLICKHOUSE_HOST", "localhost")
+CLICKHOUSE_HTTP_PORT = int(os.environ.get("CLICKHOUSE_HTTP_PORT", 8123))
+CLICKHOUSE_USER      = os.environ.get("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD  = os.environ.get("CLICKHOUSE_PASSWORD", "")
+CLICKHOUSE_DB        = os.environ.get("CLICKHOUSE_DB", "default")
+
+
+def ch_query(sql: str, timeout: int = 10):
+    """Run a query against ClickHouse's HTTP interface, return parsed JSON (FORMAT JSON)."""
+    url = f"http://{CLICKHOUSE_HOST}:{CLICKHOUSE_HTTP_PORT}/?" + urllib.parse.urlencode(
+        {"database": CLICKHOUSE_DB})
+    body = (sql.strip().rstrip(";") + " FORMAT JSON").encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    if CLICKHOUSE_USER:
+        token = base64.b64encode(f"{CLICKHOUSE_USER}:{CLICKHOUSE_PASSWORD}".encode()).decode()
+        req.add_header("Authorization", f"Basic {token}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DB HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_conn():
+    return psycopg2.connect(**DB_CONFIG)
+
+
+def q(sql, params=None):
+    conn = get_conn()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(sql, params or ())
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return [dict(r) for r in rows]
+
+
+def q1(sql, params=None):
+    rows = q(sql, params)
+    return rows[0] if rows else {}
+
+
+def get_sql_conn(preset_id: str):
+    """Connect using one of the SQL Editor presets (EPAS or WarehousePG)."""
+    preset = SQL_CONN_PRESETS.get(preset_id)
+    if not preset:
+        raise ValueError(f"Unknown connection: {preset_id}")
+    return psycopg2.connect(
+        host=preset["host"], port=preset["port"],
+        user=preset["user"], password=preset["password"],
+        dbname=preset["database"], connect_timeout=5,
+    )
+
+
+def _jsonable(v):
+    """Make a single DB cell JSON-safe (Decimal/datetime/etc -> str)."""
+    if v is None or isinstance(v, (int, float, str, bool)):
+        return v
+    return str(v)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PROCESS HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def pid_file(name: str) -> Path:
+    return PID_DIR / f"{name}.pid"
+
+
+def log_file(name: str) -> Path:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return LOG_DIR / f"{name}.log"
+
+
+def read_pid(name: str):
+    pf = pid_file(name)
+    if pf.exists():
+        try:
+            pid = int(pf.read_text().strip())
+            os.kill(pid, 0)   # raises if dead
+            return pid
+        except (ValueError, ProcessLookupError, OSError):
+            pf.unlink(missing_ok=True)
+    return None
+
+
+def write_pid(name: str, pid: int):
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    pid_file(name).write_text(str(pid))
+
+
+def kill_pid(name: str) -> bool:
+    pid = read_pid(name)
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.3)
+            try: os.kill(pid, 0)
+            except OSError: break
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    pid_file(name).unlink(missing_ok=True)
+    return True
+
+
+def run_bg(name: str, cmd: list, cwd=None) -> int:
+    """Start a background process, save PID, return PID."""
+    with open(log_file(name), "a") as lf:
+        proc = subprocess.Popen(
+            cmd, cwd=str(cwd or REPO_DIR),
+            stdout=lf, stderr=lf,
+            start_new_session=True,
+        )
+    write_pid(name, proc.pid)
+    return proc.pid
+
+
+def flowcli(*args) -> dict:
+    """Run flowcli command, return {'ok', 'stdout', 'stderr'}.
+    Correct syntax: flowcli --host HOST --port PORT COMMAND [JOB]
+    Commands: submit, start, stop, list, monitor
+    """
+    host = FS_SERVER_URL.replace("http://", "").split(":")[0]
+    port = FS_SERVER_URL.split(":")[-1]
+    cmd = ["flowcli", "--host", host, "--port", port] + list(args)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return {"ok": r.returncode == 0,
+                "stdout": r.stdout.strip(),
+                "stderr": r.stderr.strip()}
+    except FileNotFoundError:
+        return {"ok": False, "stdout": "", "stderr": "flowcli not found in PATH"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "stdout": "", "stderr": "flowcli timed out"}
+
+
+def tail_log(name: str, n: int = 30) -> str:
+    lf = log_file(name)
+    if not lf.exists():
+        return ""
+    lines = lf.read_text(errors="replace").splitlines()
+    return "\n".join(lines[-n:])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STATUS / HEALTH
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/health")
+def health():
+    try:
+        row = q1("SELECT version() AS ver, current_database() AS db, now() AS ts")
+        return jsonify({"ok": True, "version": row.get("ver", ""),
+                        "database": row.get("db", ""), "ts": str(row.get("ts", ""))})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/status")
+def status():
+    """Full system status — DB, processes, jobs."""
+    # DB row counts
+    db_ok = False
+    ecom = iot = {}
+    try:
+        ecom = q1("""
+            SELECT COUNT(*) AS total,
+                   MAX(timestamp) AS latest,
+                   COUNT(*) FILTER (WHERE timestamp > NOW()-INTERVAL '1 minute') AS last_min
+            FROM public.ecommerce_orders""")
+        iot = q1("""
+            SELECT COUNT(*) AS total,
+                   MAX(timestamp) AS latest,
+                   COUNT(*) FILTER (WHERE timestamp > NOW()-INTERVAL '1 minute') AS last_min
+            FROM public.iot_sensor_readings""")
+        db_ok = True
+    except Exception as e:
+        ecom = iot = {"error": str(e)}
+
+    # Process status
+    procs = {}
+    for name in ["flowserver", "order-generator", "iot-generator", "dashboard-api"]:
+        pid = read_pid(name)
+        procs[name] = {"running": pid is not None, "pid": pid}
+
+    # FlowServer job status via flowcli list (no status subcommand)
+    jobs = {}
+    r = flowcli("list")
+    list_out = r["stdout"] + r["stderr"]
+    for job in ["ecommerce-orders", "iot-sensors-csv"]:
+        running = job in list_out and "JOB_RUNNING" in list_out.split(job)[-1][:60] if job in list_out else False
+        jobs[job] = {"raw": list_out, "running": running}
+
+    return jsonify({
+        "ok": True,
+        "db_ok": db_ok,
+        "ecommerce": {
+            "total":    int(ecom.get("total", 0) or 0),
+            "latest":   str(ecom.get("latest", "") or ""),
+            "last_min": int(ecom.get("last_min", 0) or 0),
+        },
+        "iot": {
+            "total":    int(iot.get("total", 0) or 0),
+            "latest":   str(iot.get("latest", "") or ""),
+            "last_min": int(iot.get("last_min", 0) or 0),
+        },
+        "processes": procs,
+        "jobs": jobs,
+        "gen_config": GEN_CONFIG,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FLOWSERVER CONTROL
+# ══════════════════════════════════════════════════════════════════════════════
+
+def find_flowserver_bin() -> str:
+    """Find flowserver binary — check known locations in order."""
+    import shutil
+    candidates = [
+        "/usr/local/greenplum-db-7.3.1-WHPG/bin/flowserver",  # known install path
+        str(REPO_DIR / "flowserver"),                           # repo root symlink/copy
+        "/usr/local/bin/flowserver",
+        "/usr/bin/flowserver",
+        shutil.which("flowserver") or "",                       # PATH fallback
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return ""
+
+
+@app.route("/api/flowserver/start", methods=["POST"])
+def flowserver_start():
+    """Start the FlowServer process."""
+    pid = read_pid("flowserver")
+    if pid:
+        return jsonify({"ok": True, "message": f"FlowServer already running (PID {pid})", "pid": pid})
+
+    fs_bin = find_flowserver_bin()
+    if not fs_bin:
+        return jsonify({"ok": False,
+                        "error": f"flowserver binary not found in {REPO_DIR} or PATH"}), 400
+
+    fs_cfg = REPO_DIR / "configs" / "flow_server.json"
+    pid = run_bg("flowserver", [fs_bin, "-c", str(fs_cfg)])
+    time.sleep(2)
+    alive = read_pid("flowserver") is not None
+    return jsonify({"ok": alive,
+                    "pid": pid,
+                    "binary": fs_bin,
+                    "message": "FlowServer started" if alive else "FlowServer exited — check logs",
+                    "log": tail_log("flowserver", 15)})
+
+
+@app.route("/api/flowserver/stop", methods=["POST"])
+def flowserver_stop():
+    """Stop the FlowServer process."""
+    stopped = kill_pid("flowserver")
+    return jsonify({"ok": True, "stopped": stopped,
+                    "message": "FlowServer stopped" if stopped else "FlowServer was not running"})
+
+
+@app.route("/api/flowserver/log")
+def flowserver_log():
+    n = int(request.args.get("n", 50))
+    return jsonify({"log": tail_log("flowserver", n)})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  JOB CONTROL  (flowcli wrappers)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/jobs")
+def jobs_list():
+    """List all jobs and their status."""
+    result = []
+    r = flowcli("list")
+    list_out = r["stdout"]
+    for job in ["ecommerce-orders", "iot-sensors-csv"]:
+        if job in list_out:
+            job_line = [l for l in list_out.splitlines() if l.startswith(job)]
+            raw = job_line[0] if job_line else list_out
+            running = "JOB_RUNNING" in raw
+        else:
+            raw = "not submitted"
+            running = False
+        result.append({"name": job, "raw": raw, "running": running, "ok": r["ok"]})
+    return jsonify(result)
+
+
+@app.route("/api/jobs/<job_name>/submit", methods=["POST"])
+def job_submit(job_name):
+    """Submit a job from its YAML file."""
+    yaml_map = {
+        "ecommerce-orders": "jobs/ecommerce-orders.yaml",
+        "iot-sensors-csv":  "jobs/iot-sensors-csv.yaml",
+    }
+    yaml_path = yaml_map.get(job_name)
+    if not yaml_path:
+        return jsonify({"ok": False, "error": f"Unknown job: {job_name}"}), 400
+    r = flowcli("submit", str(REPO_DIR / yaml_path))
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+@app.route("/api/jobs/<job_name>/start", methods=["POST"])
+def job_start(job_name):
+    r = flowcli("start", job_name)
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+@app.route("/api/jobs/<job_name>/stop", methods=["POST"])
+def job_stop(job_name):
+    r = flowcli("stop", job_name)
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+@app.route("/api/jobs/<job_name>/restart", methods=["POST"])
+def job_restart(job_name):
+    flowcli("stop", job_name)
+    time.sleep(0.5)
+    r = flowcli("start", job_name)
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GENERATOR CONTROL
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/generators/start", methods=["POST"])
+def generators_start():
+    """Start one or both generators."""
+    body = request.get_json(silent=True) or {}
+
+    # Update config if provided
+    for k in ("ecom_rate", "iot_rate", "ecom_total", "iot_total"):
+        if k in body:
+            GEN_CONFIG[k] = int(body[k])
+
+    started = []
+    errors  = []
+
+    gen_dir = REPO_DIR / "generators"
+    ecom_bin = gen_dir / "order-generator"
+    iot_bin  = gen_dir / "iot-generator"
+
+    # Auto-build if missing
+    if not ecom_bin.exists() or not iot_bin.exists():
+        r = subprocess.run(["go", "build", "-o", "order-generator", "order-generator.go"],
+                           capture_output=True, cwd=str(gen_dir))
+        subprocess.run(["go", "build", "-o", "iot-generator", "iot-generator.go"],
+                       capture_output=True, cwd=str(gen_dir))
+
+    target = body.get("target", "both")   # both | ecom | iot
+
+    if target in ("both", "ecom") and not read_pid("order-generator"):
+        cmd = [str(ecom_bin),
+               "-rate", str(GEN_CONFIG["ecom_rate"]),
+               "-max-messages", str(GEN_CONFIG["ecom_total"])]
+        pid = run_bg("order-generator", cmd, cwd=gen_dir)
+        started.append(f"order-generator (PID {pid})")
+
+    if target in ("both", "iot") and not read_pid("iot-generator"):
+        cmd = [str(iot_bin),
+               "-rate", str(GEN_CONFIG["iot_rate"]),
+               "-max-messages", str(GEN_CONFIG["iot_total"])]
+        pid = run_bg("iot-generator", cmd, cwd=gen_dir)
+        started.append(f"iot-generator (PID {pid})")
+
+    return jsonify({"ok": True, "started": started, "errors": errors,
+                    "config": GEN_CONFIG})
+
+
+@app.route("/api/generators/stop", methods=["POST"])
+def generators_stop():
+    body = request.get_json(silent=True) or {}
+    target = body.get("target", "both")
+    stopped = []
+    if target in ("both", "ecom"):
+        if kill_pid("order-generator"): stopped.append("order-generator")
+    if target in ("both", "iot"):
+        if kill_pid("iot-generator"):   stopped.append("iot-generator")
+    return jsonify({"ok": True, "stopped": stopped})
+
+
+@app.route("/api/generators/config", methods=["GET", "POST"])
+def generators_config():
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        for k in ("ecom_rate", "iot_rate", "ecom_total", "iot_total"):
+            if k in body:
+                GEN_CONFIG[k] = int(body[k])
+        return jsonify({"ok": True, "config": GEN_CONFIG})
+    return jsonify(GEN_CONFIG)
+
+
+@app.route("/api/generators/log/<name>")
+def generator_log(name):
+    allowed = {"order-generator", "iot-generator"}
+    if name not in allowed:
+        return jsonify({"error": "unknown generator"}), 400
+    n = int(request.args.get("n", 30))
+    return jsonify({"log": tail_log(name, n)})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  IoT BATCH LOAD  (gpfdist bulk load, separate from the Kafka streaming path)
+#
+#  Uses generate_iot_batch.py (a standalone script — see that file for its own
+#  usage docs) to write ONE large CSV, then serves it via gpfdist and loads it
+#  into public.iot_sensor_readings through a WarehousePG external table. This
+#  mirrors real gpfdist usage: segments read ranges of a single file in
+#  parallel, rather than the dashboard splitting rows into many small files.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def find_gpfdist_bin() -> str:
+    import shutil
+    candidates = [
+        GPFDIST_BIN_ENV,
+        "/usr/local/greenplum-db-7.3.1-WHPG/bin/gpfdist",
+        "/usr/local/bin/gpfdist",
+        "/usr/bin/gpfdist",
+        shutil.which("gpfdist") or "",
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return ""
+
+
+def find_generate_script() -> Path:
+    """Locate generate_iot_batch.py — checked in a few common repo locations."""
+    candidates = [
+        os.environ.get("GENERATE_IOT_BATCH_SCRIPT", ""),
+        str(REPO_DIR / "generators" / "generate_iot_batch.py"),
+        str(REPO_DIR / "scripts" / "generate_iot_batch.py"),
+        str(REPO_DIR / "dashboards" / "generate_iot_batch.py"),
+        str(Path(__file__).resolve().parent / "generate_iot_batch.py"),
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return Path(c)
+    return None
+
+
+def _gpfdist_running() -> bool:
+    return read_pid("gpfdist") is not None
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _start_gpfdist() -> tuple:
+    """Start gpfdist serving BATCH_LOAD_DIR, if not already running. Returns (ok, msg)."""
+    if _gpfdist_running():
+        return True, f"gpfdist already running (PID {read_pid('gpfdist')})"
+
+    if _port_in_use(GPFDIST_HOST, GPFDIST_PORT):
+        return False, (
+            f"Port {GPFDIST_PORT} is already in use by another process — this batch loader needs "
+            f"its own dedicated port. Note: FlowServer's own built-in gpfdist listener (for its "
+            f"Kafka streaming jobs) typically occupies port 6070 by default, so this must be a "
+            f"different port. Set the GPFDIST_PORT env var to a free port and restart the dashboard API."
+        )
+
+    gpfdist_bin = find_gpfdist_bin()
+    if not gpfdist_bin:
+        return False, "gpfdist binary not found (checked common paths and PATH)"
+    BATCH_LOAD_DIR.mkdir(parents=True, exist_ok=True)
+    pid = run_bg("gpfdist", [gpfdist_bin, "-d", str(BATCH_LOAD_DIR), "-p", str(GPFDIST_PORT)])
+    time.sleep(1)
+    if read_pid("gpfdist") is None:
+        return False, f"gpfdist exited immediately — check {log_file('gpfdist')}"
+    return True, f"gpfdist started (PID {pid}) serving {BATCH_LOAD_DIR} on port {GPFDIST_PORT}"
+
+
+def _stop_gpfdist() -> str:
+    return "gpfdist stopped" if kill_pid("gpfdist") else "gpfdist was not running"
+
+
+# matches the progress lines generate_iot_batch.py prints, e.g.:
+#   "  ... 500,000/5,000,000 rows written"
+_GEN_PROGRESS_RE = re.compile(r"([\d,]+)\s*/\s*([\d,]+)\s+rows written")
+
+
+BATCH_LOAD_LOG_NAME = "iot-batch-load"
+
+
+def _run_batch_load(total_rows: int):
+    """Background worker: shell out to generate_iot_batch.py, then bulk-load via gpfdist."""
+    with BATCH_LOAD_LOCK:
+        BATCH_LOAD_STATE.update({
+            "running": True, "total": total_rows, "loaded": 0, "error": None,
+            "started_at": datetime.now().isoformat(), "finished_at": None,
+            "stop_requested": False, "stage": "generating",
+            "script_path": None, "generator_pid": None,
+        })
+
+    conn = None
+    proc = None
+    fpath = None
+    logf = open(log_file(BATCH_LOAD_LOG_NAME), "w")
+    try:
+        script = find_generate_script()
+        logf.write(f"[{datetime.now().isoformat()}] resolved script: {script}\n")
+        logf.flush()
+        if not script:
+            raise RuntimeError(
+                "generate_iot_batch.py not found (checked generators/, scripts/, "
+                "dashboards/, and GENERATE_IOT_BATCH_SCRIPT env var)")
+        with BATCH_LOAD_LOCK:
+            BATCH_LOAD_STATE["script_path"] = str(script)
+
+        ok, msg = _start_gpfdist()
+        logf.write(f"[{datetime.now().isoformat()}] gpfdist: {msg}\n")
+        logf.flush()
+        if not ok:
+            raise RuntimeError(msg)
+
+        BATCH_LOAD_DIR.mkdir(parents=True, exist_ok=True)
+        for f in BATCH_LOAD_DIR.glob("iot_batch_*.csv"):
+            f.unlink(missing_ok=True)
+
+        fname = f"iot_batch_{int(time.time())}.csv"
+        fpath = BATCH_LOAD_DIR / fname
+
+        # ── Stage 1: generate the CSV, streaming its progress output ────────────
+        cmd = [sys.executable, str(script), str(fpath), str(total_rows)]
+        logf.write(f"[{datetime.now().isoformat()}] launching: {' '.join(cmd)}\n")
+        logf.flush()
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+        with BATCH_LOAD_LOCK:
+            BATCH_LOAD_STATE["generator_pid"] = proc.pid
+        write_pid("iot-batch-generator", proc.pid)
+        logf.write(f"[{datetime.now().isoformat()}] generator PID {proc.pid} started\n")
+        logf.flush()
+
+        for line in proc.stdout:
+            logf.write(line if line.endswith("\n") else line + "\n")
+            logf.flush()
+            m = _GEN_PROGRESS_RE.search(line)
+            if m:
+                written = int(m.group(1).replace(",", ""))
+                with BATCH_LOAD_LOCK:
+                    BATCH_LOAD_STATE["loaded"] = written
+            with BATCH_LOAD_LOCK:
+                if BATCH_LOAD_STATE["stop_requested"]:
+                    proc.terminate()
+                    break
+        proc.wait(timeout=30)
+        pid_file("iot-batch-generator").unlink(missing_ok=True)
+        logf.write(f"[{datetime.now().isoformat()}] generator exited with code {proc.returncode}\n")
+        logf.flush()
+
+        with BATCH_LOAD_LOCK:
+            stopped = BATCH_LOAD_STATE["stop_requested"]
+        if stopped:
+            raise RuntimeError("Stopped by user during CSV generation")
+        if proc.returncode != 0:
+            raise RuntimeError(f"generate_iot_batch.py exited with code {proc.returncode} — see batch-load log")
+        if not fpath.exists() or fpath.stat().st_size == 0:
+            raise RuntimeError(f"generate_iot_batch.py finished but {fpath} is missing/empty")
+
+        # ── Stage 2: load the single CSV into WarehousePG via gpfdist ───────────
+        with BATCH_LOAD_LOCK:
+            BATCH_LOAD_STATE["stage"] = "loading"
+            BATCH_LOAD_STATE["loaded"] = total_rows  # generation confirmed complete
+
+        logf.write(f"[{datetime.now().isoformat()}] CSV ready ({fpath.stat().st_size:,} bytes) — "
+                   f"creating external table and loading\n")
+        logf.flush()
+
+        conn = get_conn()
+        conn.autocommit = False
+        cur = conn.cursor()
+
+        ext_table = "ext_iot_batch_stage"
+        cur.execute(f"DROP EXTERNAL TABLE IF EXISTS {ext_table}")
+        cur.execute(f"""
+            CREATE EXTERNAL TABLE {ext_table} (
+                timestamp     timestamp,
+                sensor_id     varchar(20),
+                location      varchar(100),
+                temperature   decimal(5,2),
+                humidity      decimal(5,2),
+                pressure      decimal(6,2),
+                battery_level decimal(5,2),
+                status        varchar(20)
+            )
+            LOCATION ('gpfdist://{GPFDIST_HOST}:{GPFDIST_PORT}/{fname}')
+            FORMAT 'CSV' (HEADER)
+        """)
+
+        # Same computed-column logic FlowServer applies on the streaming path,
+        # reproduced here so batch-loaded rows look consistent with streamed ones.
+        # location format from generate_iot_batch.py is "<Building>-Floor-<N>".
+        cur.execute(f"""
+            INSERT INTO public.iot_sensor_readings
+                (timestamp, sensor_id, location, temperature, humidity, pressure,
+                 battery_level, status, alert_level, building, floor,
+                 temperature_f, comfort_index, battery_status, processed_at, data_quality)
+            SELECT
+                timestamp, sensor_id, location, temperature, humidity, pressure,
+                battery_level, status,
+                CASE WHEN status = 'low_battery' THEN 2
+                     WHEN status IN ('high_temp','low_temp') THEN 2
+                     WHEN status = 'high_humidity' THEN 1
+                     ELSE 0 END AS alert_level,
+                split_part(location, '-Floor-', 1) AS building,
+                NULLIF(split_part(location, '-Floor-', 2), '')::int AS floor,
+                ROUND(temperature * 9.0/5 + 32, 2) AS temperature_f,
+                CASE WHEN temperature BETWEEN 20 AND 26 AND humidity BETWEEN 30 AND 60 THEN 'comfortable'
+                     WHEN temperature BETWEEN 18 AND 28 THEN 'acceptable'
+                     ELSE 'uncomfortable' END AS comfort_index,
+                CASE WHEN battery_level >= 80 THEN 'full'
+                     WHEN battery_level >= 40 THEN 'ok'
+                     WHEN battery_level >= 20 THEN 'low'
+                     ELSE 'critical' END AS battery_status,
+                now() AS processed_at,
+                'batch_gpfdist' AS data_quality
+            FROM {ext_table}
+        """)
+        conn.commit()
+        logf.write(f"[{datetime.now().isoformat()}] INSERT ... SELECT committed\n")
+        logf.flush()
+
+        cur.execute(f"DROP EXTERNAL TABLE IF EXISTS {ext_table}")
+        conn.commit()
+        cur.close(); conn.close()
+
+        fpath.unlink(missing_ok=True)
+
+        with BATCH_LOAD_LOCK:
+            BATCH_LOAD_STATE["running"] = False
+            BATCH_LOAD_STATE["stage"] = "done"
+            BATCH_LOAD_STATE["finished_at"] = datetime.now().isoformat()
+        logf.write(f"[{datetime.now().isoformat()}] done\n")
+
+    except Exception as e:
+        logf.write(f"[{datetime.now().isoformat()}] ERROR: {e}\n")
+        if proc and proc.poll() is None:
+            try: proc.terminate()
+            except Exception: pass
+        if conn:
+            try: conn.rollback(); conn.close()
+            except Exception: pass
+        if fpath:
+            try: fpath.unlink(missing_ok=True)
+            except Exception: pass
+        pid_file("iot-batch-generator").unlink(missing_ok=True)
+        with BATCH_LOAD_LOCK:
+            BATCH_LOAD_STATE["running"] = False
+            BATCH_LOAD_STATE["error"] = str(e)
+            BATCH_LOAD_STATE["finished_at"] = datetime.now().isoformat()
+    finally:
+        logf.close()
+
+
+@app.route("/api/iot/batch-load/start", methods=["POST"])
+def iot_batch_load_start():
+    body = request.get_json(silent=True) or {}
+    total_rows = int(body.get("total_rows", 1000000))
+
+    with BATCH_LOAD_LOCK:
+        if BATCH_LOAD_STATE["running"]:
+            return jsonify({"ok": False, "error": "Batch load already running"}), 400
+
+    t = threading.Thread(target=_run_batch_load, args=(total_rows,), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "message": f"Batch load started: {total_rows:,} rows"})
+
+
+@app.route("/api/iot/batch-load/status")
+def iot_batch_load_status():
+    with BATCH_LOAD_LOCK:
+        return jsonify(dict(BATCH_LOAD_STATE))
+
+
+@app.route("/api/iot/batch-load/log")
+def iot_batch_load_log():
+    n = int(request.args.get("n", 60))
+    return jsonify({"log": tail_log(BATCH_LOAD_LOG_NAME, n)})
+
+
+@app.route("/api/iot/batch-load/stop", methods=["POST"])
+def iot_batch_load_stop():
+    with BATCH_LOAD_LOCK:
+        BATCH_LOAD_STATE["stop_requested"] = True
+    return jsonify({"ok": True, "message": "Stop requested — will halt after current stage"})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SQL EDITOR  (validate CDC: EPAS source <-> WarehousePG target)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/sqleditor/connections")
+def sqleditor_connections():
+    """List available connection presets (no passwords in the response)."""
+    return jsonify([
+        {"id": k, "label": v["label"], "host": v["host"], "port": v["port"], "database": v["database"]}
+        for k, v in SQL_CONN_PRESETS.items()
+    ])
+
+
+@app.route("/api/sqleditor/presets")
+def sqleditor_presets():
+    """Quick-start queries per connection, shown as buttons in the editor."""
+    return jsonify(SQL_EDITOR_PRESET_QUERIES)
+
+
+@app.route("/api/sqleditor/query", methods=["POST"])
+def sqleditor_query():
+    """Run a single SQL statement against one of the preset connections."""
+    body    = request.get_json(silent=True) or {}
+    conn_id = body.get("conn")
+    sql     = (body.get("sql") or "").strip()
+    confirm = bool(body.get("confirm"))
+
+    if not conn_id or conn_id not in SQL_CONN_PRESETS:
+        return jsonify({"ok": False, "error": f"Unknown connection: {conn_id}"}), 400
+    if not sql:
+        return jsonify({"ok": False, "error": "Empty query"}), 400
+
+    # crude single-statement guard — avoid ; a; b; stacked statements
+    if ";" in sql.rstrip().rstrip(";"):
+        return jsonify({"ok": False, "error": "Only a single statement is allowed per run"}), 400
+
+    if DESTRUCTIVE_SQL_RE.search(sql) and not confirm:
+        return jsonify({
+            "ok": False, "needs_confirm": True,
+            "error": "This looks like a data-changing statement "
+                     "(DROP/DELETE/TRUNCATE/ALTER/UPDATE/INSERT/GRANT/REVOKE/CREATE). "
+                     "Resend with confirm:true to proceed.",
+        }), 400
+
+    conn = None
+    t0 = time.time()
+    try:
+        conn = get_sql_conn(conn_id)
+        cur = conn.cursor()
+        cur.execute("SET LOCAL statement_timeout = '15000'")  # 15s, milliseconds
+        cur.execute(sql)
+        elapsed = round(time.time() - t0, 3)
+
+        if cur.description:
+            cols = [d[0] for d in cur.description]
+            raw_rows = cur.fetchmany(500)
+            rows = [[_jsonable(v) for v in r] for r in raw_rows]
+            conn.commit()
+            return jsonify({
+                "ok": True, "columns": cols, "rows": rows,
+                "row_count": len(rows), "truncated": len(rows) == 500,
+                "elapsed": elapsed,
+            })
+        else:
+            affected = cur.rowcount
+            conn.commit()
+            return jsonify({
+                "ok": True, "columns": [], "rows": [],
+                "affected": affected, "elapsed": elapsed,
+            })
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return jsonify({"ok": False, "error": str(e)}), 400
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CDC DEMO  (EPAS -> Debezium -> Kafka -> FlowServer -> WarehousePG)
+# ══════════════════════════════════════════════════════════════════════════════
+
+CDC_SLOT_NAME  = os.environ.get("CDC_SLOT_NAME", "debezium_tu_slot")
+CDC_PUB_NAME   = os.environ.get("CDC_PUB_NAME", "debezium_tu_publication")
+
+
+@app.route("/api/cdc/status")
+def cdc_status():
+    """Combined health of the TU CDC pipeline: EPAS source + WarehousePG target."""
+    result = {"ok": False, "epas": {"ok": False}, "whpg": {"ok": False}}
+
+    # ── EPAS side: replication slot, publication, source row counts ──────────
+    try:
+        conn = get_sql_conn("epas_tu")
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute("""SELECT slot_name, active, active_pid, restart_lsn, confirmed_flush_lsn
+                       FROM pg_replication_slots WHERE slot_name = %s""", (CDC_SLOT_NAME,))
+        slot = cur.fetchone()
+
+        cur.execute("SELECT 1 FROM pg_publication WHERE pubname = %s", (CDC_PUB_NAME,))
+        pub_exists = cur.fetchone() is not None
+
+        cur.execute("SELECT COUNT(*) AS cnt FROM oltp.credit_accounts")
+        ca_cnt = cur.fetchone()["cnt"]
+        cur.execute("SELECT COUNT(*) AS cnt FROM oltp.bureau_score_events")
+        bse_cnt = cur.fetchone()["cnt"]
+
+        cur.close(); conn.close()
+        result["epas"] = {
+            "ok": True,
+            "slot": {k: _jsonable(v) for k, v in dict(slot).items()} if slot else None,
+            "publication_exists": pub_exists,
+            "credit_accounts": int(ca_cnt),
+            "bureau_score_events": int(bse_cnt),
+        }
+    except Exception as e:
+        result["epas"] = {"ok": False, "error": str(e)}
+
+    # ── WarehousePG side: target row counts + freshness ───────────────────────
+    try:
+        conn = get_sql_conn("whpg_tu")
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute("SELECT COUNT(*) AS cnt, MAX(event_ts) AS latest FROM tu_bureau_demo.credit_accounts")
+        ca = cur.fetchone()
+        cur.execute("SELECT COUNT(*) AS cnt, MAX(score_ts) AS latest FROM tu_bureau_demo.bureau_score_events")
+        bse = cur.fetchone()
+
+        cur.close(); conn.close()
+        result["whpg"] = {
+            "ok": True,
+            "credit_accounts":     {"count": int(ca["cnt"]),      "latest": str(ca["latest"] or "")},
+            "bureau_score_events": {"count": int(bse["cnt"]),     "latest": str(bse["latest"] or "")},
+        }
+    except Exception as e:
+        result["whpg"] = {"ok": False, "error": str(e)}
+
+    result["ok"] = result["epas"].get("ok", False) or result["whpg"].get("ok", False)
+    return jsonify(result)
+
+
+@app.route("/api/cdc/recent")
+def cdc_recent():
+    """Recent rows landing in WarehousePG, for a live ticker."""
+    out = {"credit_accounts": [], "bureau_score_events": []}
+
+    try:
+        conn = get_sql_conn("whpg_tu")
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        try:
+            cur.execute("""
+                SELECT account_id, consumer_id, lender_id, product, outstanding_amount,
+                       dpd_bucket, status, event_ts, ingested_ts
+                FROM tu_bureau_demo.credit_accounts
+                ORDER BY ingested_ts DESC LIMIT 20""")
+            out["credit_accounts"] = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            out["credit_accounts_error"] = str(e)
+            conn.rollback()
+
+        try:
+            cur.execute("""
+                SELECT * FROM tu_bureau_demo.bureau_score_events
+                ORDER BY score_ts DESC LIMIT 20""")
+            out["bureau_score_events"] = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            out["bureau_score_events_error"] = str(e)
+            conn.rollback()
+
+        cur.close(); conn.close()
+    except Exception as e:
+        out["error"] = str(e)
+
+    # make every value JSON-safe (Decimal/datetime -> str)
+    for key in ("credit_accounts", "bureau_score_events"):
+        out[key] = [{k: _jsonable(v) for k, v in row.items()} for row in out[key]]
+
+    return jsonify(out)
+
+
+@app.route("/api/cdc/jobs")
+def cdc_jobs_list():
+    """Status of the CDC FlowServer jobs (tu_load_credit_accounts, etc)."""
+    r = flowcli("list")
+    list_out = r["stdout"] + r["stderr"]
+    result = []
+    for name in CDC_JOBS:
+        if name in list_out:
+            line = [l for l in list_out.splitlines() if l.startswith(name)]
+            raw = line[0] if line else list_out
+            running = "JOB_RUNNING" in raw
+        else:
+            raw = "not submitted"
+            running = False
+        result.append({"name": name, "raw": raw, "running": running, "ok": r["ok"]})
+    return jsonify(result)
+
+
+@app.route("/api/cdc/jobs/<job_name>/submit", methods=["POST"])
+def cdc_job_submit(job_name):
+    yaml_rel = CDC_JOBS.get(job_name)
+    if not yaml_rel:
+        return jsonify({"ok": False, "error": f"Unknown CDC job: {job_name}"}), 400
+    yaml_path = REPO_DIR / yaml_rel
+    if not yaml_path.exists():
+        return jsonify({"ok": False, "error": f"YAML not found: {yaml_path}"}), 400
+    # these jobs need an explicit --name (the YAML itself has no job-name field)
+    r = flowcli("submit", "--name", job_name, str(yaml_path))
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+@app.route("/api/cdc/jobs/<job_name>/start", methods=["POST"])
+def cdc_job_start(job_name):
+    if job_name not in CDC_JOBS:
+        return jsonify({"ok": False, "error": f"Unknown CDC job: {job_name}"}), 400
+    r = flowcli("start", job_name)
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+@app.route("/api/cdc/jobs/<job_name>/stop", methods=["POST"])
+def cdc_job_stop(job_name):
+    if job_name not in CDC_JOBS:
+        return jsonify({"ok": False, "error": f"Unknown CDC job: {job_name}"}), 400
+    r = flowcli("stop", job_name)
+    return jsonify({"ok": r["ok"], "output": r["stdout"] or r["stderr"]})
+
+
+@app.route("/api/cdc/jobs/start_all", methods=["POST"])
+def cdc_jobs_start_all():
+    """Submit (idempotent) then start all CDC jobs in one click."""
+    steps, errors = [], []
+    for name, yaml_rel in CDC_JOBS.items():
+        yaml_path = REPO_DIR / yaml_rel
+        if not yaml_path.exists():
+            errors.append(f"{name}: YAML not found ({yaml_path})")
+            continue
+        r_sub = flowcli("submit", "--name", name, str(yaml_path))
+        sub_out = (r_sub["stdout"] or r_sub["stderr"])
+        r_start = flowcli("start", name)
+        start_out = (r_start["stdout"] or r_start["stderr"])
+        if r_start["ok"] or "already" in start_out.lower():
+            steps.append(f"{name}: started")
+        else:
+            errors.append(f"{name}: submit={sub_out or 'ok'} / start={start_out}")
+    return jsonify({"ok": len(errors) == 0, "steps": steps, "errors": errors})
+
+
+@app.route("/api/cdc/jobs/stop_all", methods=["POST"])
+def cdc_jobs_stop_all():
+    steps = []
+    for name in CDC_JOBS:
+        r = flowcli("stop", name)
+        steps.append(f"{name}: {(r['stdout'] or r['stderr']).strip() or 'stop sent'}")
+    return jsonify({"ok": True, "steps": steps})
+
+
+@app.route("/api/cdc/generator/start", methods=["POST"])
+def cdc_generator_start():
+    """Start the continuous credit-bureau generator (writes directly to EPAS)."""
+    if read_pid(CDC_GEN_LOG_NAME) is not None:
+        return jsonify({"ok": False, "error": "Generator already running"}), 400
+
+    script = find_cdc_generator_script()
+    if not script:
+        return jsonify({
+            "ok": False,
+            "error": "credit_bureau_generator.py not found (checked generators/, scripts/, "
+                     "dashboards/, and CDC_GEN_SCRIPT env var)",
+        }), 400
+
+    body = request.get_json(silent=True) or {}
+    cfg = {**CDC_GEN_DEFAULTS, **{k: body[k] for k in CDC_GEN_DEFAULTS if k in body}}
+
+    cmd = [
+        sys.executable, str(script),
+        "--new-accounts-rate", str(cfg["new_accounts_rate"]),
+        "--update-rate", str(cfg["update_rate"]),
+        "--score-rate", str(cfg["score_rate"]),
+        "--interval", str(cfg["interval"]),
+    ]
+    pid = run_bg(CDC_GEN_LOG_NAME, cmd, cwd=script.parent)
+    time.sleep(1)
+    if read_pid(CDC_GEN_LOG_NAME) is None:
+        return jsonify({
+            "ok": False,
+            "error": f"Generator exited immediately — check the log ({log_file(CDC_GEN_LOG_NAME)})",
+            "log": tail_log(CDC_GEN_LOG_NAME, 30),
+        }), 400
+
+    return jsonify({"ok": True, "pid": pid, "config": cfg,
+                     "message": f"credit-bureau-generator started (PID {pid})"})
+
+
+@app.route("/api/cdc/generator/stop", methods=["POST"])
+def cdc_generator_stop():
+    stopped = kill_pid(CDC_GEN_LOG_NAME)
+    return jsonify({"ok": True, "stopped": stopped,
+                     "message": "Generator stopped" if stopped else "Generator was not running"})
+
+
+@app.route("/api/cdc/generator/status")
+def cdc_generator_status():
+    pid = read_pid(CDC_GEN_LOG_NAME)
+    return jsonify({"ok": True, "running": pid is not None, "pid": pid})
+
+
+@app.route("/api/cdc/generator/log")
+def cdc_generator_log():
+    n = int(request.args.get("n", 40))
+    return jsonify({"log": tail_log(CDC_GEN_LOG_NAME, n)})
+
+
+@app.route("/api/cdc/insert_test_rows", methods=["POST"])
+def cdc_insert_test_rows():
+    """Insert synthetic rows directly on EPAS so you can watch them land in WHPG via CDC."""
+    body = request.get_json(silent=True) or {}
+    n = max(1, min(int(body.get("n", 5)), 500))
+    table = body.get("table", "credit_accounts")
+
+    if table not in ("credit_accounts", "bureau_score_events"):
+        return jsonify({"ok": False, "error": f"Unknown table: {table}"}), 400
+
+    conn = None
+    try:
+        conn = get_sql_conn("epas_tu")
+        cur = conn.cursor()
+
+        if table == "credit_accounts":
+            cur.execute("SELECT COALESCE(MAX(account_id), 100000) FROM oltp.credit_accounts")
+            next_id = cur.fetchone()[0] + 1
+
+            products = ["credit_card", "personal_loan", "auto_loan", "mortgage", "line_of_credit"]
+
+            inserted_ids = []
+            for i in range(n):
+                account_id = next_id + i
+                consumer_id = random.randint(1000, 9999)
+                lender_id = random.randint(1, 20)
+                product = random.choice(products)
+                sanctioned = round(random.uniform(1000, 50000), 2)
+                outstanding = round(sanctioned * random.uniform(0.1, 0.95), 2)
+                dpd_bucket, status = pick_dpd_and_status(outstanding, sanctioned, product)
+
+                cur.execute("""
+                    INSERT INTO oltp.credit_accounts
+                        (account_id, consumer_id, lender_id, product, sanctioned_amount,
+                         outstanding_amount, dpd_bucket, status, opened_ts, event_ts)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                            now() - (random() * interval '365 days'), now())
+                """, (account_id, consumer_id, lender_id, product, sanctioned,
+                      outstanding, dpd_bucket, status))
+                inserted_ids.append(account_id)
+
+            conn.commit()
+            cur.close(); conn.close()
+            return jsonify({"ok": True, "inserted": n, "ids": inserted_ids, "table": table,
+                            "message": f"Inserted {n} row(s) into oltp.credit_accounts on EPAS — "
+                                       f"check the credit_accounts ticker below once Debezium/FlowServer catch up."})
+
+        else:  # bureau_score_events
+            cur.execute("SELECT COALESCE(MAX(score_event_id), 100000) FROM oltp.bureau_score_events")
+            next_id = cur.fetchone()[0] + 1
+
+            # Link most new score events to an existing account's consumer_id —
+            # otherwise they never join back to credit_accounts, and MADlib's
+            # "latest bureau score" feature falls back to its neutral default
+            # for almost every account. See credit_bureau_generator.py for the
+            # same fix on the continuous-generator side.
+            cur.execute("SELECT DISTINCT consumer_id FROM oltp.credit_accounts")
+            existing_consumers = [r[0] for r in cur.fetchall()]
+
+            triggers = ["new_inquiry", "account_update", "delinquency", "payoff", "periodic_refresh"]
+
+            inserted_ids = []
+            for i in range(n):
+                score_event_id = next_id + i
+                if existing_consumers and random.random() < 0.85:
+                    consumer_id = random.choice(existing_consumers)
+                else:
+                    consumer_id = random.randint(1000, 9999)
+                score_value = random.randint(300, 850)
+                score_version = random.choice(["v3.0", "v4.0"])
+                score_trigger = random.choice(triggers)
+
+                cur.execute("""
+                    INSERT INTO oltp.bureau_score_events
+                        (score_event_id, consumer_id, score_value, score_version, score_trigger, score_ts)
+                    VALUES (%s, %s, %s, %s, %s, now())
+                """, (score_event_id, consumer_id, score_value, score_version, score_trigger))
+                inserted_ids.append(score_event_id)
+
+            conn.commit()
+            cur.close(); conn.close()
+            return jsonify({"ok": True, "inserted": n, "ids": inserted_ids, "table": table,
+                            "message": f"Inserted {n} row(s) into oltp.bureau_score_events on EPAS — "
+                                       f"check the bureau_score_events ticker below once Debezium/FlowServer catch up."})
+
+    except Exception as e:
+        if conn:
+            try: conn.rollback(); conn.close()
+            except Exception: pass
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/cdc/update_test_rows", methods=["POST"])
+def cdc_update_test_rows():
+    """
+    Mutate EXISTING rows on EPAS (rather than inserting new ones) so the merge/upsert
+    path on the WarehousePG side can be observed: the target row should update in
+    place (same account_id), not appear as a duplicate.
+    """
+    body = request.get_json(silent=True) or {}
+    n = max(1, min(int(body.get("n", 3)), 100))
+
+    conn = None
+    try:
+        conn = get_sql_conn("epas_tu")
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT account_id, outstanding_amount, sanctioned_amount, product
+            FROM oltp.credit_accounts
+            ORDER BY random() LIMIT %s
+        """, (n,))
+        rows = cur.fetchall()
+        if not rows:
+            cur.close(); conn.close()
+            return jsonify({
+                "ok": False,
+                "error": "No existing rows in oltp.credit_accounts to update — "
+                         "insert test rows first, then try Simulate Update.",
+            }), 400
+
+        updated = []
+        for account_id, outstanding, sanctioned, product in rows:
+            # simulate a partial paydown rather than a random jump, so the change is realistic
+            new_outstanding = round(float(outstanding) * random.uniform(0.70, 0.98), 2)
+            new_dpd, new_status = pick_dpd_and_status(new_outstanding, sanctioned, product)
+
+            cur.execute("""
+                UPDATE oltp.credit_accounts
+                SET outstanding_amount = %s, dpd_bucket = %s, status = %s, event_ts = now()
+                WHERE account_id = %s
+            """, (new_outstanding, new_dpd, new_status, account_id))
+            updated.append({
+                "account_id": account_id,
+                "outstanding_amount": new_outstanding,
+                "dpd_bucket": new_dpd,
+                "status": new_status,
+            })
+
+        conn.commit()
+        cur.close(); conn.close()
+        return jsonify({
+            "ok": True, "updated": updated,
+            "message": f"Updated {len(updated)} existing row(s) in oltp.credit_accounts on EPAS — "
+                       f"the same account_id should update IN PLACE in tu_bureau_demo.credit_accounts "
+                       f"(merge/upsert), not appear as a new row.",
+        })
+    except Exception as e:
+        if conn:
+            try: conn.rollback(); conn.close()
+            except Exception: pass
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/cdc/backfill_scores", methods=["POST"])
+def cdc_backfill_scores():
+    """
+    Insert one bureau score event for every consumer_id in credit_accounts that
+    doesn't have one yet — guarantees full score coverage in one click, rather
+    than relying on enough random draws from Insert Test Rows / the continuous
+    generator to eventually cover every account. Directly improves the MADlib
+    feature table's "latest bureau score" coverage (see 04_madlib_credit_risk.sql).
+    """
+    conn = None
+    try:
+        conn = get_sql_conn("epas_tu")
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT DISTINCT ca.consumer_id
+            FROM oltp.credit_accounts ca
+            WHERE NOT EXISTS (
+                SELECT 1 FROM oltp.bureau_score_events bse WHERE bse.consumer_id = ca.consumer_id
+            )
+        """)
+        missing = [r[0] for r in cur.fetchall()]
+
+        if not missing:
+            cur.close(); conn.close()
+            return jsonify({
+                "ok": True, "inserted": 0,
+                "message": "Every consumer_id in credit_accounts already has a bureau score event — nothing to backfill.",
+            })
+
+        cur.execute("SELECT COALESCE(MAX(score_event_id), 100000) FROM oltp.bureau_score_events")
+        next_id = cur.fetchone()[0] + 1
+
+        score_versions = ["v3.0", "v4.0"]
+        triggers = ["new_inquiry", "account_update", "delinquency", "payoff", "periodic_refresh"]
+
+        for i, consumer_id in enumerate(missing):
+            cur.execute("""
+                INSERT INTO oltp.bureau_score_events
+                    (score_event_id, consumer_id, score_value, score_version, score_trigger, score_ts)
+                VALUES (%s, %s, %s, %s, %s, now())
+            """, (next_id + i, consumer_id, random.randint(300, 850),
+                  random.choice(score_versions), random.choice(triggers)))
+
+        conn.commit()
+        cur.close(); conn.close()
+        return jsonify({
+            "ok": True, "inserted": len(missing),
+            "message": f"Backfilled {len(missing)} bureau score event(s) — one per consumer_id in "
+                       f"credit_accounts that had none. Every account now has a real latest bureau "
+                       f"score instead of the neutral default.",
+        })
+    except Exception as e:
+        if conn:
+            try: conn.rollback(); conn.close()
+            except Exception: pass
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MADLIB CREDIT RISK SCORING  (in-database ML on the CDC'd bureau data)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_psql_file(sql_path: Path, preset: dict, timeout: int = 600):
+    """Run a .sql file via the psql CLI against a connection preset. Returns CompletedProcess."""
+    env = os.environ.copy()
+    env["PGPASSWORD"] = preset["password"]
+    cmd = [
+        "psql", "-h", preset["host"], "-p", str(preset["port"]),
+        "-U", preset["user"], "-d", preset["database"],
+        "-v", "ON_ERROR_STOP=1", "-f", str(sql_path),
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout)
+
+
+@app.route("/api/madlib/train", methods=["POST"])
+def madlib_train():
+    """Run the MADlib training/scoring SQL script against WarehousePG (tu db)."""
+    if not MADLIB_SQL_PATH.exists():
+        return jsonify({"ok": False, "error": f"SQL script not found: {MADLIB_SQL_PATH}"}), 400
+    try:
+        r = run_psql_file(MADLIB_SQL_PATH, SQL_CONN_PRESETS["whpg_tu"])
+        output = (r.stdout or "") + (r.stderr or "")
+        return jsonify({"ok": r.returncode == 0, "output": output[-6000:]})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "psql not found in PATH"}), 400
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Training timed out after 600s"}), 504
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/madlib/status")
+def madlib_status():
+    """Whether a model exists, its fit stats, and the risk-tier distribution."""
+    try:
+        conn = get_sql_conn("whpg_tu")
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute("SELECT to_regclass('tu_bureau_demo.credit_risk_model') IS NOT NULL AS exists")
+        model_exists = cur.fetchone()["exists"]
+
+        result = {"ok": True, "model_exists": bool(model_exists)}
+
+        try:
+            cur.execute("SELECT count(*) AS n FROM tu_bureau_demo.credit_risk_features")
+            result["feature_rows"] = cur.fetchone()["n"]
+        except Exception:
+            conn.rollback()
+            result["feature_rows"] = 0
+
+        if model_exists:
+            # Main model table: coef, log_likelihood, std_err, z_stats, p_values,
+            # odds_ratios, condition_no, num_iterations. NOTE: num_rows_processed /
+            # num_rows_skipped are NOT here — they're in the separate _summary table.
+            try:
+                cur.execute("""
+                    SELECT log_likelihood, num_iterations
+                    FROM tu_bureau_demo.credit_risk_model LIMIT 1""")
+                m = cur.fetchone()
+                if m:
+                    result["log_likelihood"] = _jsonable(m.get("log_likelihood"))
+                    result["iterations"] = _jsonable(m.get("num_iterations"))
+            except Exception as e:
+                conn.rollback()
+                result["model_summary_error"] = str(e)
+
+            try:
+                cur.execute("""
+                    SELECT num_rows_processed, num_rows_skipped
+                    FROM tu_bureau_demo.credit_risk_model_summary LIMIT 1""")
+                s = cur.fetchone()
+                if s:
+                    result["rows_processed"] = _jsonable(s.get("num_rows_processed"))
+                    result["rows_skipped"] = _jsonable(s.get("num_rows_skipped"))
+            except Exception as e:
+                conn.rollback()
+                result["model_training_summary_error"] = str(e)
+
+            try:
+                cur.execute("""
+                    SELECT risk_tier, count(*) AS n,
+                           round(avg(probability_delinquent)::numeric, 3) AS avg_probability
+                    FROM tu_bureau_demo.credit_risk_scores
+                    GROUP BY risk_tier ORDER BY risk_tier""")
+                result["tiers"] = [
+                    {"risk_tier": r["risk_tier"], "count": r["n"], "avg_probability": float(r["avg_probability"] or 0)}
+                    for r in cur.fetchall()
+                ]
+                cur.execute("SELECT count(*) AS n FROM tu_bureau_demo.credit_risk_scores")
+                result["scored_count"] = cur.fetchone()["n"]
+            except Exception as e:
+                conn.rollback()
+                result["scores_error"] = str(e)
+
+        cur.close(); conn.close()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/madlib/top_risk")
+def madlib_top_risk():
+    """Highest-probability-of-delinquency accounts, for the dashboard table."""
+    try:
+        conn = get_sql_conn("whpg_tu")
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT s.account_id, s.consumer_id, s.probability_delinquent, s.risk_tier,
+                   s.actual_delinquent, ca.product, ca.outstanding_amount,
+                   ca.dpd_bucket, ca.status
+            FROM tu_bureau_demo.credit_risk_scores s
+            JOIN tu_bureau_demo.credit_accounts_latest ca ON ca.account_id = s.account_id
+            ORDER BY s.probability_delinquent DESC
+            LIMIT 20""")
+        rows = [{k: _jsonable(v) for k, v in dict(r).items()} for r in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  START ALL / STOP ALL
+# ══════════════════════════════════════════════════════════════════════════════
+
+FS_BIN_PATH = "/usr/local/greenplum-db-7.3.1-WHPG/bin/flowserver"
+
+KAFKA_BIN    = "/opt/kafka/bin"
+KAFKA_BROKER = "localhost:9092"
+
+
+def start_flowserver() -> tuple:
+    """Start FlowServer, wait for port 6060. Returns (ok, message)."""
+    pid = read_pid("flowserver")
+    if pid:
+        return True, f"FlowServer already running (PID {pid})"
+
+    fs_bin = find_flowserver_bin()
+    if not fs_bin:
+        return False, f"flowserver binary not found (checked {FS_BIN_PATH} and PATH)"
+
+    fs_cfg = REPO_DIR / "configs" / "flow_server.json"
+    new_pid = run_bg("flowserver", [fs_bin, "-c", str(fs_cfg)])
+
+    # Wait up to 15s for port 6060
+    import socket
+    for i in range(15):
+        time.sleep(1)
+        try:
+            with socket.create_connection(("localhost", 6060), timeout=1):
+                return True, f"FlowServer started (PID {new_pid}, ready in {i+1}s)"
+        except OSError:
+            pass
+        try: os.kill(new_pid, 0)
+        except OSError:
+            return False, f"FlowServer crashed — check {log_file('flowserver')}"
+
+    return False, "FlowServer did not open port 6060 within 15s"
+
+
+def stop_flowserver() -> str:
+    """Stop FlowServer process."""
+    stopped = kill_pid("flowserver")
+    # Also kill any stray
+    try:
+        subprocess.run(["pkill", "-f", "flowserver -c"], capture_output=True)
+    except Exception:
+        pass
+    return "FlowServer stopped" if stopped else "FlowServer was not running"
+
+
+def delete_kafka_topics() -> list:
+    """Delete Kafka topics as kafka user via sudo su."""
+    inner = f"/tmp/kafka-reset-{os.getpid()}.sh"
+    script = f"""#!/bin/bash
+KAFKA_BIN="{KAFKA_BIN}"
+KAFKA_BROKER="{KAFKA_BROKER}"
+[[ -x "$KAFKA_BIN/kafka-topics" ]] && KT="$KAFKA_BIN/kafka-topics" || KT="$KAFKA_BIN/kafka-topics.sh"
+RESULTS=""
+for TOPIC in ecommerce-orders iot-sensors-csv; do
+    if "$KT" --list --bootstrap-server "$KAFKA_BROKER" 2>/dev/null | grep -q "^${{TOPIC}}$"; then
+        "$KT" --delete --topic "$TOPIC" --bootstrap-server "$KAFKA_BROKER" 2>/dev/null || true
+        echo "deleted:$TOPIC"
+    else
+        echo "notfound:$TOPIC"
+    fi
+done
+"""
+    Path(inner).write_text(script)
+    Path(inner).chmod(0o755)
+    try:
+        r = subprocess.run(["sudo", "su", "-", "kafka", "-c", f"bash {inner}"],
+                           capture_output=True, text=True, timeout=30)
+        lines = r.stdout.strip().splitlines()
+        msgs = []
+        for line in lines:
+            if line.startswith("deleted:"): msgs.append(f"Topic '{line.split(':')[1]}' deleted")
+            elif line.startswith("notfound:"): msgs.append(f"Topic '{line.split(':')[1]}' not found")
+        return msgs or ["Topics processed"]
+    except Exception as e:
+        return [f"Topic deletion error: {e}"]
+    finally:
+        Path(inner).unlink(missing_ok=True)
+
+
+def recreate_kafka_topics() -> list:
+    """Recreate Kafka topics as kafka user."""
+    inner = f"/tmp/kafka-create-{os.getpid()}.sh"
+    script = f"""#!/bin/bash
+KAFKA_BIN="{KAFKA_BIN}"
+KAFKA_BROKER="{KAFKA_BROKER}"
+[[ -x "$KAFKA_BIN/kafka-topics" ]] && KT="$KAFKA_BIN/kafka-topics" || KT="$KAFKA_BIN/kafka-topics.sh"
+for TOPIC in ecommerce-orders iot-sensors-csv; do
+    if ! "$KT" --list --bootstrap-server "$KAFKA_BROKER" 2>/dev/null | grep -q "^${{TOPIC}}$"; then
+        "$KT" --create --topic "$TOPIC" --bootstrap-server "$KAFKA_BROKER" \
+              --partitions 3 --replication-factor 1
+        echo "created:$TOPIC"
+    else
+        echo "exists:$TOPIC"
+    fi
+done
+"""
+    Path(inner).write_text(script)
+    Path(inner).chmod(0o755)
+    try:
+        r = subprocess.run(["sudo", "su", "-", "kafka", "-c", f"bash {inner}"],
+                           capture_output=True, text=True, timeout=30)
+        lines = r.stdout.strip().splitlines()
+        msgs = []
+        for line in lines:
+            if line.startswith("created:"): msgs.append(f"Topic '{line.split(':')[1]}' created")
+            elif line.startswith("exists:"): msgs.append(f"Topic '{line.split(':')[1]}' already exists")
+        return msgs or ["Topics processed"]
+    except Exception as e:
+        return [f"Topic creation error: {e}"]
+    finally:
+        Path(inner).unlink(missing_ok=True)
+
+
+@app.route("/api/start_all", methods=["POST"])
+def start_all():
+    """Start FlowServer → jobs → generators."""
+    body   = request.get_json(silent=True) or {}
+    steps  = []
+    errors = []
+
+    # 1. FlowServer
+    ok, msg = start_flowserver()
+    steps.append(msg)
+    if not ok:
+        errors.append(msg)
+
+    # 2. Jobs (only if FlowServer is up)
+    if ok or read_pid("flowserver"):
+        for job, yaml in [("ecommerce-orders", "jobs/ecommerce-orders.yaml"),
+                          ("iot-sensors-csv",  "jobs/iot-sensors-csv.yaml")]:
+            flowcli("submit", str(REPO_DIR / yaml))
+            r = flowcli("start", job)
+            out = r["stdout"] or r["stderr"]
+            if r["ok"] or "already" in out.lower():
+                steps.append(f"Job '{job}' started")
+            else:
+                errors.append(f"Job '{job}': {out}")
+
+    # 3. Generators
+    for key in ("ecom_rate", "iot_rate", "ecom_total", "iot_total"):
+        if key in body: GEN_CONFIG[key] = int(body[key])
+
+    gen_dir  = REPO_DIR / "generators"
+    ecom_bin = gen_dir / "order-generator"
+    iot_bin  = gen_dir / "iot-generator"
+
+    if not ecom_bin.exists() or not iot_bin.exists():
+        errors.append("Generators not built — run setup.sh first")
+    else:
+        for name, binary, rate_key, total_key in [
+            ("order-generator", ecom_bin, "ecom_rate", "ecom_total"),
+            ("iot-generator",   iot_bin,  "iot_rate",  "iot_total"),
+        ]:
+            if not read_pid(name):
+                pid = run_bg(name, [str(binary),
+                             "-rate", str(GEN_CONFIG[rate_key]),
+                             "-max-messages", str(GEN_CONFIG[total_key])],
+                             cwd=gen_dir)
+                steps.append(f"{name} started (PID {pid}, {GEN_CONFIG[rate_key]}/s)")
+            else:
+                steps.append(f"{name} already running")
+
+    return jsonify({"ok": len(errors) == 0, "steps": steps, "errors": errors})
+
+
+@app.route("/api/stop_all", methods=["POST"])
+def stop_all():
+    """Stop jobs → generators → FlowServer."""
+    steps = []
+
+    # 1. Stop jobs
+    if read_pid("flowserver"):
+        for job in ["ecommerce-orders", "iot-sensors-csv"]:
+            r = flowcli("stop", job)
+            steps.append(f"Job '{job}': {(r['stdout'] or r['stderr']).strip() or 'stop sent'}")
+    else:
+        steps.append("FlowServer not running — skipping job stop")
+
+    # 2. Stop generators
+    for name in ["order-generator", "iot-generator"]:
+        steps.append(f"{name}: {'stopped' if kill_pid(name) else 'not running'}")
+
+    # 3. Stop FlowServer
+    steps.append(stop_flowserver())
+
+    return jsonify({"ok": True, "steps": steps, "errors": []})
+
+
+@app.route("/api/reset_all", methods=["POST"])
+def reset_all():
+    """
+    Full reset + restart:
+      stop jobs → stop generators → stop FlowServer
+      → truncate tables → delete Kafka topics → recreate topics
+      → start FlowServer → submit + start jobs → start generators
+    """
+    body   = request.get_json(silent=True) or {}
+    steps  = []
+    errors = []
+
+    # ── STOP ─────────────────────────────────────────────────────────────────
+    steps.append("── Stopping ──")
+
+    if read_pid("flowserver"):
+        for job in ["ecommerce-orders", "iot-sensors-csv"]:
+            r = flowcli("stop", job)
+            steps.append(f"Job '{job}': {(r['stdout'] or r['stderr']).strip() or 'stop sent'}")
+
+    for name in ["order-generator", "iot-generator"]:
+        steps.append(f"{name}: {'stopped' if kill_pid(name) else 'not running'}")
+
+    steps.append(stop_flowserver())
+    time.sleep(1)
+
+    # ── TRUNCATE TABLES ───────────────────────────────────────────────────────
+    steps.append("── Resetting Data ──")
+    try:
+        conn = get_conn()
+        cur  = conn.cursor()
+        cur.execute("TRUNCATE TABLE public.ecommerce_orders")
+        cur.execute("TRUNCATE TABLE public.iot_sensor_readings")
+        conn.commit()
+        cur.close(); conn.close()
+        steps.append("Tables truncated (ecommerce_orders, iot_sensor_readings)")
+    except Exception as e:
+        errors.append(f"Truncate failed: {e}")
+
+    # ── KAFKA TOPICS ──────────────────────────────────────────────────────────
+    steps.append("── Resetting Kafka Topics ──")
+    steps.extend(delete_kafka_topics())
+    time.sleep(2)   # give Kafka time to process deletion
+    steps.extend(recreate_kafka_topics())
+
+    # ── START ─────────────────────────────────────────────────────────────────
+    steps.append("── Starting ──")
+
+    ok, msg = start_flowserver()
+    steps.append(msg)
+    if not ok:
+        errors.append(msg)
+
+    if ok or read_pid("flowserver"):
+        for job, yaml in [("ecommerce-orders", "jobs/ecommerce-orders.yaml"),
+                          ("iot-sensors-csv",  "jobs/iot-sensors-csv.yaml")]:
+            flowcli("submit", str(REPO_DIR / yaml))
+            r = flowcli("start", job)
+            out = r["stdout"] or r["stderr"]
+            steps.append(f"Job '{job}': {'started' if r['ok'] or 'already' in out.lower() else out}")
+
+    for key in ("ecom_rate", "iot_rate", "ecom_total", "iot_total"):
+        if key in body: GEN_CONFIG[key] = int(body[key])
+
+    gen_dir  = REPO_DIR / "generators"
+    for name, binary, rate_key, total_key in [
+        ("order-generator", gen_dir / "order-generator", "ecom_rate", "ecom_total"),
+        ("iot-generator",   gen_dir / "iot-generator",   "iot_rate",  "iot_total"),
+    ]:
+        if binary.exists():
+            pid = run_bg(name, [str(binary),
+                         "-rate", str(GEN_CONFIG[rate_key]),
+                         "-max-messages", str(GEN_CONFIG[total_key])],
+                         cwd=gen_dir)
+            steps.append(f"{name} started (PID {pid}, {GEN_CONFIG[rate_key]}/s)")
+        else:
+            errors.append(f"{name} binary not found — run setup.sh first")
+
+    return jsonify({"ok": len(errors) == 0, "steps": steps, "errors": errors})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  E-COMMERCE METRICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/ecom/metrics")
+def ecom_metrics():
+    try:
+        totals = q1("""
+            SELECT COUNT(*)                                              AS total_orders,
+                   COALESCE(SUM(total_price),0)                         AS total_revenue,
+                   COALESCE(AVG(total_price),0)                         AS avg_order_value,
+                   COUNT(*) FILTER (WHERE timestamp > NOW()-INTERVAL '1 minute') AS orders_per_min,
+                   COUNT(*) FILTER (WHERE is_bulk_order)                AS bulk_orders
+            FROM public.ecommerce_orders""")
+        buckets = q("""
+            SELECT revenue_bucket, COUNT(*) AS order_count, SUM(total_price) AS revenue
+            FROM public.ecommerce_orders
+            GROUP BY revenue_bucket
+            ORDER BY CASE revenue_bucket
+                WHEN 'low' THEN 1 WHEN 'medium' THEN 2
+                WHEN 'high' THEN 3 WHEN 'premium' THEN 4 END""")
+        categories = q("""
+            SELECT category, COUNT(*) AS order_count, SUM(total_price) AS revenue
+            FROM public.ecommerce_orders
+            GROUP BY category ORDER BY revenue DESC LIMIT 6""")
+        countries = q("""
+            SELECT country, COUNT(*) AS order_count, SUM(total_price) AS revenue
+            FROM public.ecommerce_orders
+            GROUP BY country ORDER BY revenue DESC LIMIT 10""")
+        throughput = q("""
+            SELECT DATE_TRUNC('minute', timestamp) AS bucket,
+                   COUNT(*) AS cnt, SUM(total_price) AS revenue
+            FROM public.ecommerce_orders
+            WHERE timestamp > NOW()-INTERVAL '10 minutes'
+            GROUP BY bucket ORDER BY bucket""")
+        return jsonify({
+            "ts": datetime.now().isoformat(),
+            "totals":     {k: float(v) if isinstance(v, (int, float)) else v
+                           for k, v in totals.items()},
+            "buckets":    buckets,
+            "categories": categories,
+            "countries":  countries,
+            "throughput": [{"bucket": str(r["bucket"]), "cnt": r["cnt"],
+                            "revenue": float(r["revenue"] or 0)} for r in throughput],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ecom/recent")
+def ecom_recent():
+    try:
+        rows = q("""
+            SELECT order_id, timestamp, customer_name, product_name,
+                   category, total_price, revenue_bucket, country, is_bulk_order
+            FROM public.ecommerce_orders
+            ORDER BY timestamp DESC LIMIT 20""")
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ecom/flowserver_sql")
+def ecom_flowserver_sql():
+    try:
+        yaml_path = REPO_DIR / "jobs" / "ecommerce-orders.yaml"
+        content = yaml_path.read_text()
+    except Exception:
+        content = "# jobs/ecommerce-orders.yaml not found"
+    return jsonify({"yaml": content})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLICKHOUSE  (real-time mirror of ecommerce-orders, own Kafka consumer group)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/clickhouse/status")
+def clickhouse_status():
+    try:
+        totals = ch_query("""
+            SELECT count() AS total,
+                   max(timestamp) AS latest,
+                   countIf(timestamp > now() - INTERVAL 1 MINUTE) AS last_min
+            FROM default.ecommerce_orders""")
+        row = totals["data"][0] if totals.get("data") else {}
+
+        consumers = []
+        consumer_error = None
+        try:
+            cons = ch_query("""
+                SELECT table, consumer_id, is_currently_used, num_messages_read,
+                       num_commits, last_poll_time, last_commit_time
+                FROM system.kafka_consumers
+                WHERE table = 'kafka_ecommerce_orders'""")
+            consumers = cons.get("data", [])
+        except Exception as e:
+            consumer_error = str(e)
+
+        return jsonify({
+            "ok": True,
+            "total": int(row.get("total", 0) or 0),
+            "latest": row.get("latest", "") or "",
+            "last_min": int(row.get("last_min", 0) or 0),
+            "consumers": consumers,
+            "consumer_error": consumer_error,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/clickhouse/recent")
+def clickhouse_recent():
+    try:
+        d = ch_query("""
+            SELECT order_id, timestamp, customer_name, category, total_price,
+                   revenue_bucket, country, is_bulk_order
+            FROM default.ecommerce_orders
+            ORDER BY timestamp DESC LIMIT 20""")
+        return jsonify(d.get("data", []))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  IoT METRICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/iot/metrics")
+def iot_metrics():
+    try:
+        totals = q1("""
+            SELECT COUNT(*) AS total_readings,
+                   COUNT(DISTINCT sensor_id) AS active_sensors,
+                   COUNT(*) FILTER (WHERE timestamp > NOW()-INTERVAL '1 minute') AS readings_per_min,
+                   COUNT(*) FILTER (WHERE alert_level >= 2) AS critical_alerts,
+                   ROUND(AVG(temperature)::numeric, 2) AS avg_temp,
+                   ROUND(AVG(humidity)::numeric, 2) AS avg_humidity
+            FROM public.iot_sensor_readings""")
+        alerts = q("""
+            SELECT alert_level, COUNT(*) AS reading_count
+            FROM public.iot_sensor_readings
+            GROUP BY alert_level ORDER BY alert_level""")
+        buildings = q("""
+            SELECT building, COUNT(*) AS reading_count,
+                   AVG(temperature) AS avg_temp,
+                   AVG(humidity) AS avg_humidity,
+                   AVG(battery_level) AS avg_battery
+            FROM public.iot_sensor_readings
+            WHERE building IS NOT NULL
+            GROUP BY building ORDER BY building""")
+        comfort = q("""
+            SELECT comfort_index, COUNT(*) AS cnt
+            FROM public.iot_sensor_readings
+            WHERE comfort_index IS NOT NULL
+            GROUP BY comfort_index""")
+        throughput = q("""
+            SELECT DATE_TRUNC('minute', timestamp) AS bucket, COUNT(*) AS cnt
+            FROM public.iot_sensor_readings
+            WHERE timestamp > NOW()-INTERVAL '10 minutes'
+            GROUP BY bucket ORDER BY bucket""")
+        return jsonify({
+            "ts": datetime.now().isoformat(),
+            "totals":    {k: float(v) if isinstance(v, (int, float)) else v
+                          for k, v in totals.items()},
+            "alerts":    alerts,
+            "buildings": buildings,
+            "comfort":   comfort,
+            "throughput": [{"bucket": str(r["bucket"]), "cnt": r["cnt"]} for r in throughput],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/sensors")
+def iot_sensors():
+    try:
+        rows = q("""
+            SELECT sensor_id, building, floor,
+                   COUNT(*) AS reading_count,
+                   ROUND(AVG(temperature)::numeric, 2)   AS avg_temp,
+                   ROUND(AVG(temperature_f)::numeric, 2) AS avg_temp_f,
+                   ROUND(AVG(humidity)::numeric, 2)      AS avg_humidity,
+                   ROUND(AVG(battery_level)::numeric, 1) AS avg_battery,
+                   MAX(timestamp)  AS last_reading,
+                   MAX(alert_level) AS max_alert
+            FROM public.iot_sensor_readings
+            WHERE building IS NOT NULL
+            GROUP BY sensor_id, building, floor
+            ORDER BY sensor_id""")
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/recent")
+def iot_recent():
+    try:
+        rows = q("""
+            SELECT timestamp, sensor_id, building, floor,
+                   temperature, temperature_f, humidity,
+                   comfort_index, alert_level, status, battery_status
+            FROM public.iot_sensor_readings
+            ORDER BY timestamp DESC LIMIT 30""")
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/flowserver_sql")
+def iot_flowserver_sql():
+    try:
+        yaml_path = REPO_DIR / "jobs" / "iot-sensors-csv.yaml"
+        content = yaml_path.read_text()
+    except Exception:
+        content = "# jobs/iot-sensors-csv.yaml not found"
+    return jsonify({"yaml": content})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SQL FILE SERVING  (for the DB Setup tab)
+# ══════════════════════════════════════════════════════════════════════════════
+
+SQL_FILES = {
+    "01_create_database.sql": "sql/01_create_database.sql",
+    "02_create_tables.sql":   "sql/02_create_tables.sql",
+    "03_verify_setup.sql":    "sql/03_verify_setup.sql",
+}
+
+@app.route("/api/sql/<filename>")
+def serve_sql(filename):
+    """Serve raw SQL file content for display in the dashboard."""
+    rel = SQL_FILES.get(filename)
+    if not rel:
+        return jsonify({"error": f"Unknown file: {filename}"}), 404
+    try:
+        content = (REPO_DIR / rel).read_text()
+        return jsonify({"filename": filename, "content": content})
+    except FileNotFoundError:
+        return jsonify({"error": f"{rel} not found in repo at {REPO_DIR}"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SERVE STATIC (dashboard.html)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/favicon.svg")
+def favicon():
+    return send_from_directory(str(Path(__file__).parent), "favicon.svg",
+                               mimetype="image/svg+xml")
+
+@app.route("/")
+def root():
+    return send_from_directory(str(Path(__file__).parent), "dashboard.html")
+
+
+@app.route("/<path:filename>")
+def static_files(filename):
+    return send_from_directory(str(Path(__file__).parent), filename)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MAIN
+# ══════════════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pg-host",     default="localhost")
+    parser.add_argument("--pg-port",     type=int, default=5432)
+    parser.add_argument("--pg-user",     default="gpadmin")
+    parser.add_argument("--pg-password", default="")
+    parser.add_argument("--pg-dbname",   default="streaming_demo")
+    parser.add_argument("--kafka",       default="localhost:9092")
+    parser.add_argument("--app-port",    type=int, default=5055)
+    parser.add_argument("--repo-dir",    default=None)
+    args = parser.parse_args()
+
+    DB_CONFIG.update({
+        "host":     args.pg_host,
+        "port":     args.pg_port,
+        "user":     args.pg_user,
+        "password": args.pg_password,
+        "database": args.pg_dbname,
+    })
+    KAFKA_BROKER = args.kafka
+    if args.repo_dir:
+        REPO_DIR = Path(args.repo_dir).resolve()
+
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Register this process's own PID
+    write_pid("dashboard-api", os.getpid())
+
+    print(f"\n  WHPG Real Streaming Demo — Dashboard API")
+    print(f"  DB      : {args.pg_user}@{args.pg_host}:{args.pg_port}/{args.pg_dbname}")
+    print(f"  Kafka   : {KAFKA_BROKER}")
+    print(f"  Repo    : {REPO_DIR}")
+    print(f"  Open    : http://localhost:{args.app_port}/\n")
+
+    app.run(host="0.0.0.0", port=args.app_port, debug=False, threaded=True)
+

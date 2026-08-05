@@ -1,0 +1,49 @@
+
+==============================================
+ WHPG Real Streaming Demo — Starting
+==============================================
+ E-Com : 10000/s   IoT : 10000/s
+==============================================
+
+► Clearing previous instances...
+  ✓ Cleared
+
+► Starting FlowServer...
+  ✓ FlowServer PID=3951186 — waiting for port 6060...
+  ✓ FlowServer ready (1s)
+
+► FlowServer Jobs...
+  $ flowcli --host localhost --port 6060 remove ecommerce-orders
+2026-04-30T06:00:02.681Z	[31mERROR[0m	Failed to remove job ecommerce-orders: rpc error: code = Internal desc = job with name ecommerce-orders not found
+  $ flowcli --host localhost --port 6060 submit /home/gpadmin/forrester/repo/jobs/ecommerce-orders.yaml
+    → 2026-04-30T06:00:02.702Z	[34mINFO[0m	Job submitted successfully: ecommerce-orders
+  ✓ 'ecommerce-orders' submitted
+  $ flowcli --host localhost --port 6060 start ecommerce-orders
+    → 2026-04-30T06:00:02.891Z	[34mINFO[0m	Job started successfully: ecommerce-orders
+  ✓ 'ecommerce-orders' started
+  $ flowcli --host localhost --port 6060 remove iot-sensors-csv
+2026-04-30T06:00:02.930Z	[31mERROR[0m	Failed to remove job iot-sensors-csv: rpc error: code = Internal desc = job with name iot-sensors-csv not found
+  $ flowcli --host localhost --port 6060 submit /home/gpadmin/forrester/repo/jobs/iot-sensors-csv.yaml
+    → 2026-04-30T06:00:02.968Z	[34mINFO[0m	Job submitted successfully: iot-sensors-csv
+  ✓ 'iot-sensors-csv' submitted
+  $ flowcli --host localhost --port 6060 start iot-sensors-csv
+    → 2026-04-30T06:00:03.129Z	[34mINFO[0m	Job started successfully: iot-sensors-csv
+  ✓ 'iot-sensors-csv' started
+
+► Starting Generators...
+  ✓ order-generator PID=3951279  10000/s
+  ✓ iot-generator   PID=3951280  10000/s
+
+► Starting Dashboard API...
+  ✓ Dashboard API PID=3951281  port=5055
+
+==============================================
+ ✓ All services started (nohup — SSH-safe)
+==============================================
+
+ Dashboard  : http://localhost:5055/
+ FlowServer : http://localhost:6060/
+
+ Stop : ./scripts/stop-demo.sh
+ Logs : tail -f /tmp/flowserver-demo/logs/*.log
+

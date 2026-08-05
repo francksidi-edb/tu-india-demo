@@ -1,0 +1,310 @@
+--- api.py	2026-08-02 15:30:33.332488587 +0000
++++ api.mine.py	2026-08-02 15:39:57.656510549 +0000
+@@ -19,7 +19,6 @@
+ 
+ import argparse
+ import os
+-import re
+ import signal
+ import subprocess
+ import threading
+@@ -57,68 +56,6 @@
+     "iot_total":  0,
+ }
+ 
+-# ── SQL Editor: connection presets (EPAS source + WarehousePG target) ────────
+-# Credentials come from env vars so nothing sensitive is hardcoded in the repo.
+-SQL_CONN_PRESETS = {
+-    "epas_tu": {
+-        "label":    "EPAS — tu (5444)",
+-        "host":     os.environ.get("EPAS_HOST", "localhost"),
+-        "port":     int(os.environ.get("EPAS_PORT", 5444)),
+-        "user":     os.environ.get("EPAS_USER", "enterprisedb"),
+-        "password": os.environ.get("EPAS_PASSWORD", "admin"),
+-        "database": os.environ.get("EPAS_DB", "tu"),
+-    },
+-    "whpg_tu": {
+-        "label":    "WarehousePG — tu (5432)",
+-        "host":     os.environ.get("WHPG_TU_HOST", "localhost"),
+-        "port":     int(os.environ.get("WHPG_TU_PORT", 5432)),
+-        "user":     os.environ.get("WHPG_TU_USER", "gpadmin"),
+-        "password": os.environ.get("WHPG_TU_PASSWORD", "admin"),
+-        "database": os.environ.get("WHPG_TU_DB", "tu"),
+-    },
+-    "whpg_streaming_demo": {
+-        "label":    "WarehousePG — streaming_demo (5432)",
+-        "host":     DB_CONFIG["host"],
+-        "port":     DB_CONFIG["port"],
+-        "user":     DB_CONFIG["user"],
+-        "password": DB_CONFIG["password"],
+-        "database": DB_CONFIG["database"],
+-    },
+-}
+-
+-# Any query containing these keywords requires an explicit confirm=true from the client.
+-DESTRUCTIVE_SQL_RE = re.compile(
+-    r"\b(DROP|DELETE|TRUNCATE|ALTER|UPDATE|INSERT|GRANT|REVOKE|CREATE)\b",
+-    re.IGNORECASE,
+-)
+-
+-# Quick-start queries shown as buttons per connection, to validate the CDC pipeline
+-# (Postgres EPAS -> Debezium -> Kafka -> FlowServer -> WarehousePG) without typing SQL.
+-SQL_EDITOR_PRESET_QUERIES = {
+-    "epas_tu": [
+-        {"name": "Replication slot status",
+-         "sql": "SELECT slot_name, active, active_pid, restart_lsn, confirmed_flush_lsn\nFROM pg_replication_slots;"},
+-        {"name": "Publication tables",
+-         "sql": "SELECT pubname, schemaname, tablename\nFROM pg_publication_tables\nWHERE pubname = 'debezium_tu_publication';"},
+-        {"name": "Source row counts",
+-         "sql": "SELECT 'credit_accounts' AS tbl, COUNT(*) FROM oltp.credit_accounts\nUNION ALL\nSELECT 'bureau_score_events', COUNT(*) FROM oltp.bureau_score_events;"},
+-        {"name": "Recent source rows",
+-         "sql": "SELECT * FROM oltp.credit_accounts\nORDER BY event_ts DESC\nLIMIT 20;"},
+-    ],
+-    "whpg_tu": [
+-        {"name": "Target row counts",
+-         "sql": "SELECT 'credit_accounts' AS tbl, COUNT(*) FROM tu_bureau_demo.credit_accounts\nUNION ALL\nSELECT 'bureau_score_events', COUNT(*) FROM tu_bureau_demo.bureau_score_events\nUNION ALL\nSELECT 'lender_feed_landing', COUNT(*) FROM tu_bureau_demo.lender_feed_landing;"},
+-        {"name": "Recent target rows",
+-         "sql": "SELECT * FROM tu_bureau_demo.credit_accounts\nORDER BY event_ts DESC\nLIMIT 20;"},
+-        {"name": "Landing audit trail",
+-         "sql": "SELECT * FROM tu_bureau_demo.lender_feed_landing\nORDER BY ingested_ts DESC\nLIMIT 20;"},
+-    ],
+-    "whpg_streaming_demo": [
+-        {"name": "Ecommerce row count", "sql": "SELECT COUNT(*) FROM public.ecommerce_orders;"},
+-        {"name": "IoT row count",       "sql": "SELECT COUNT(*) FROM public.iot_sensor_readings;"},
+-    ],
+-}
+-
+ 
+ # ══════════════════════════════════════════════════════════════════════════════
+ #  DB HELPERS
+@@ -142,25 +79,6 @@
+     return rows[0] if rows else {}
+ 
+ 
+-def get_sql_conn(preset_id: str):
+-    """Connect using one of the SQL Editor presets (EPAS or WarehousePG)."""
+-    preset = SQL_CONN_PRESETS.get(preset_id)
+-    if not preset:
+-        raise ValueError(f"Unknown connection: {preset_id}")
+-    return psycopg2.connect(
+-        host=preset["host"], port=preset["port"],
+-        user=preset["user"], password=preset["password"],
+-        dbname=preset["database"], connect_timeout=5,
+-    )
+-
+-
+-def _jsonable(v):
+-    """Make a single DB cell JSON-safe (Decimal/datetime/etc -> str)."""
+-    if v is None or isinstance(v, (int, float, str, bool)):
+-        return v
+-    return str(v)
+-
+-
+ # ══════════════════════════════════════════════════════════════════════════════
+ #  PROCESS HELPERS
+ # ══════════════════════════════════════════════════════════════════════════════
+@@ -510,204 +428,6 @@
+ 
+ 
+ # ══════════════════════════════════════════════════════════════════════════════
+-#  SQL EDITOR  (validate CDC: EPAS source <-> WarehousePG target)
+-# ══════════════════════════════════════════════════════════════════════════════
+-
+-@app.route("/api/sqleditor/connections")
+-def sqleditor_connections():
+-    """List available connection presets (no passwords in the response)."""
+-    return jsonify([
+-        {"id": k, "label": v["label"], "host": v["host"], "port": v["port"], "database": v["database"]}
+-        for k, v in SQL_CONN_PRESETS.items()
+-    ])
+-
+-
+-@app.route("/api/sqleditor/presets")
+-def sqleditor_presets():
+-    """Quick-start queries per connection, shown as buttons in the editor."""
+-    return jsonify(SQL_EDITOR_PRESET_QUERIES)
+-
+-
+-@app.route("/api/sqleditor/query", methods=["POST"])
+-def sqleditor_query():
+-    """Run a single SQL statement against one of the preset connections."""
+-    body    = request.get_json(silent=True) or {}
+-    conn_id = body.get("conn")
+-    sql     = (body.get("sql") or "").strip()
+-    confirm = bool(body.get("confirm"))
+-
+-    if not conn_id or conn_id not in SQL_CONN_PRESETS:
+-        return jsonify({"ok": False, "error": f"Unknown connection: {conn_id}"}), 400
+-    if not sql:
+-        return jsonify({"ok": False, "error": "Empty query"}), 400
+-
+-    # crude single-statement guard — avoid ; a; b; stacked statements
+-    if ";" in sql.rstrip().rstrip(";"):
+-        return jsonify({"ok": False, "error": "Only a single statement is allowed per run"}), 400
+-
+-    if DESTRUCTIVE_SQL_RE.search(sql) and not confirm:
+-        return jsonify({
+-            "ok": False, "needs_confirm": True,
+-            "error": "This looks like a data-changing statement "
+-                     "(DROP/DELETE/TRUNCATE/ALTER/UPDATE/INSERT/GRANT/REVOKE/CREATE). "
+-                     "Resend with confirm:true to proceed.",
+-        }), 400
+-
+-    conn = None
+-    t0 = time.time()
+-    try:
+-        conn = get_sql_conn(conn_id)
+-        cur = conn.cursor()
+-        cur.execute("SET LOCAL statement_timeout = '15000'")  # 15s, milliseconds
+-        cur.execute(sql)
+-        elapsed = round(time.time() - t0, 3)
+-
+-        if cur.description:
+-            cols = [d[0] for d in cur.description]
+-            raw_rows = cur.fetchmany(500)
+-            rows = [[_jsonable(v) for v in r] for r in raw_rows]
+-            conn.commit()
+-            return jsonify({
+-                "ok": True, "columns": cols, "rows": rows,
+-                "row_count": len(rows), "truncated": len(rows) == 500,
+-                "elapsed": elapsed,
+-            })
+-        else:
+-            affected = cur.rowcount
+-            conn.commit()
+-            return jsonify({
+-                "ok": True, "columns": [], "rows": [],
+-                "affected": affected, "elapsed": elapsed,
+-            })
+-    except Exception as e:
+-        if conn:
+-            try: conn.rollback()
+-            except Exception: pass
+-        return jsonify({"ok": False, "error": str(e)}), 400
+-    finally:
+-        if conn:
+-            try: conn.close()
+-            except Exception: pass
+-
+-
+-# ══════════════════════════════════════════════════════════════════════════════
+-#  CDC DEMO  (EPAS -> Debezium -> Kafka -> FlowServer -> WarehousePG)
+-# ══════════════════════════════════════════════════════════════════════════════
+-
+-CDC_SLOT_NAME  = os.environ.get("CDC_SLOT_NAME", "debezium_tu_slot")
+-CDC_PUB_NAME   = os.environ.get("CDC_PUB_NAME", "debezium_tu_publication")
+-
+-
+-@app.route("/api/cdc/status")
+-def cdc_status():
+-    """Combined health of the TU CDC pipeline: EPAS source + WarehousePG target."""
+-    result = {"ok": False, "epas": {"ok": False}, "whpg": {"ok": False}}
+-
+-    # ── EPAS side: replication slot, publication, source row counts ──────────
+-    try:
+-        conn = get_sql_conn("epas_tu")
+-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+-
+-        cur.execute("""SELECT slot_name, active, active_pid, restart_lsn, confirmed_flush_lsn
+-                       FROM pg_replication_slots WHERE slot_name = %s""", (CDC_SLOT_NAME,))
+-        slot = cur.fetchone()
+-
+-        cur.execute("SELECT 1 FROM pg_publication WHERE pubname = %s", (CDC_PUB_NAME,))
+-        pub_exists = cur.fetchone() is not None
+-
+-        cur.execute("SELECT COUNT(*) AS cnt FROM oltp.credit_accounts")
+-        ca_cnt = cur.fetchone()["cnt"]
+-        cur.execute("SELECT COUNT(*) AS cnt FROM oltp.bureau_score_events")
+-        bse_cnt = cur.fetchone()["cnt"]
+-
+-        cur.close(); conn.close()
+-        result["epas"] = {
+-            "ok": True,
+-            "slot": {k: _jsonable(v) for k, v in dict(slot).items()} if slot else None,
+-            "publication_exists": pub_exists,
+-            "credit_accounts": int(ca_cnt),
+-            "bureau_score_events": int(bse_cnt),
+-        }
+-    except Exception as e:
+-        result["epas"] = {"ok": False, "error": str(e)}
+-
+-    # ── WarehousePG side: target row counts + freshness ───────────────────────
+-    try:
+-        conn = get_sql_conn("whpg_tu")
+-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+-
+-        cur.execute("SELECT COUNT(*) AS cnt, MAX(event_ts) AS latest FROM tu_bureau_demo.credit_accounts")
+-        ca = cur.fetchone()
+-        cur.execute("SELECT COUNT(*) AS cnt, MAX(score_ts) AS latest FROM tu_bureau_demo.bureau_score_events")
+-        bse = cur.fetchone()
+-        cur.execute("SELECT COUNT(*) AS cnt, MAX(ingested_ts) AS latest FROM tu_bureau_demo.lender_feed_landing")
+-        landing = cur.fetchone()
+-
+-        cur.close(); conn.close()
+-        result["whpg"] = {
+-            "ok": True,
+-            "credit_accounts":     {"count": int(ca["cnt"]),      "latest": str(ca["latest"] or "")},
+-            "bureau_score_events": {"count": int(bse["cnt"]),     "latest": str(bse["latest"] or "")},
+-            "lender_feed_landing": {"count": int(landing["cnt"]), "latest": str(landing["latest"] or "")},
+-        }
+-    except Exception as e:
+-        result["whpg"] = {"ok": False, "error": str(e)}
+-
+-    result["ok"] = result["epas"].get("ok", False) or result["whpg"].get("ok", False)
+-    return jsonify(result)
+-
+-
+-@app.route("/api/cdc/recent")
+-def cdc_recent():
+-    """Recent rows landing in WarehousePG, for a live ticker."""
+-    out = {"credit_accounts": [], "bureau_score_events": [], "lender_feed_landing": []}
+-
+-    try:
+-        conn = get_sql_conn("whpg_tu")
+-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+-
+-        try:
+-            cur.execute("""
+-                SELECT account_id, consumer_id, lender_id, product, outstanding_amount,
+-                       dpd_bucket, status, event_ts, ingested_ts
+-                FROM tu_bureau_demo.credit_accounts
+-                ORDER BY ingested_ts DESC LIMIT 20""")
+-            out["credit_accounts"] = [dict(r) for r in cur.fetchall()]
+-        except Exception as e:
+-            out["credit_accounts_error"] = str(e)
+-            conn.rollback()
+-
+-        try:
+-            cur.execute("""
+-                SELECT * FROM tu_bureau_demo.bureau_score_events
+-                ORDER BY score_ts DESC LIMIT 20""")
+-            out["bureau_score_events"] = [dict(r) for r in cur.fetchall()]
+-        except Exception as e:
+-            out["bureau_score_events_error"] = str(e)
+-            conn.rollback()
+-
+-        try:
+-            cur.execute("""
+-                SELECT feed_id, lender_id, source_topic, payload_type, feed_channel, event_ts, ingested_ts
+-                FROM tu_bureau_demo.lender_feed_landing
+-                ORDER BY ingested_ts DESC LIMIT 20""")
+-            out["lender_feed_landing"] = [dict(r) for r in cur.fetchall()]
+-        except Exception as e:
+-            out["lender_feed_landing_error"] = str(e)
+-            conn.rollback()
+-
+-        cur.close(); conn.close()
+-    except Exception as e:
+-        out["error"] = str(e)
+-
+-    # make every value JSON-safe (Decimal/datetime -> str)
+-    for key in ("credit_accounts", "bureau_score_events", "lender_feed_landing"):
+-        out[key] = [{k: _jsonable(v) for k, v in row.items()} for row in out[key]]
+-
+-    return jsonify(out)
+-
+-
+-# ══════════════════════════════════════════════════════════════════════════════
+ #  START ALL / STOP ALL
+ # ══════════════════════════════════════════════════════════════════════════════
+ 

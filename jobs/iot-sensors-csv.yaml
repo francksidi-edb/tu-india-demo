@@ -1,0 +1,90 @@
+version: v1.0
+source:
+  kafka:
+    brokers:
+      - localhost:9092
+    topic: iot-sensors-csv
+    value:
+      csv:
+        columns:
+        - name: col_timestamp
+          type: text
+        - name: col_sensor_id
+          type: text
+        - name: col_location
+          type: text
+        - name: col_temperature
+          type: text
+        - name: col_humidity
+          type: text
+        - name: col_pressure
+          type: text
+        - name: col_battery_level
+          type: text
+        - name: col_status
+          type: text
+        delimiter: ','
+        skip_header_lines: 1
+    task:
+      batch_size:
+        interval_ms: 2000
+target:
+  database:
+    host: localhost
+    port: 5432
+    user: gpadmin
+    dbname: streaming_demo
+    error_limit: 100
+    tables:
+    - table: iot_sensor_readings
+      schema: public
+      mode:
+        insert: {}
+      mapping:
+        timestamp: col_timestamp::timestamp
+        sensor_id: col_sensor_id
+        location: col_location
+        temperature: col_temperature::decimal(5,2)
+        humidity: col_humidity::decimal(5,2)
+        pressure: col_pressure::decimal(6,2)
+        battery_level: col_battery_level::decimal(5,2)
+        status: col_status
+        alert_level: |
+          CASE 
+            WHEN col_status = 'normal' THEN 0
+            WHEN col_status IN ('high_temp', 'low_temp', 'high_humidity') THEN 1
+            WHEN col_status = 'low_battery' THEN 2
+            ELSE 3
+          END
+        building: SPLIT_PART(col_location, '-', 1)
+        floor: |
+          CASE 
+            WHEN col_location LIKE '%Floor-%' 
+            THEN CAST(SPLIT_PART(col_location, '-', 3) AS INTEGER)
+            ELSE NULL
+          END
+        temperature_f: (col_temperature::decimal * 9.0 / 5.0) + 32.0
+        comfort_index: |
+          CASE
+            WHEN col_temperature::decimal BETWEEN 20 AND 24 
+             AND col_humidity::decimal BETWEEN 40 AND 60 THEN 'comfortable'
+            WHEN col_temperature::decimal BETWEEN 18 AND 26 
+             AND col_humidity::decimal BETWEEN 35 AND 65 THEN 'acceptable'
+            ELSE 'uncomfortable'
+          END
+        battery_status: |
+          CASE
+            WHEN col_battery_level::decimal >= 80 THEN 'good'
+            WHEN col_battery_level::decimal >= 40 THEN 'medium'
+            WHEN col_battery_level::decimal >= 20 THEN 'low'
+            ELSE 'critical'
+          END
+        processed_at: NOW()
+        data_quality: |
+          CASE
+            WHEN col_temperature::decimal BETWEEN -40 AND 50 
+             AND col_humidity::decimal BETWEEN 0 AND 100
+             AND col_pressure::decimal BETWEEN 900 AND 1100
+            THEN 'valid'
+            ELSE 'suspicious'
+          END

@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""
+Generate a batch CSV of synthetic IoT sensor readings for gpfdist bulk loading.
+
+Usage:
+    python3 generate_iot_batch.py <output_csv_path> <row_count>
+
+Example:
+    python3 generate_iot_batch.py /tmp/gpfdist-batch/iot_batch_5m.csv 5000000
+"""
+import sys
+import random
+import datetime
+
+SENSOR_IDS = [f"SENS-{i:03d}" for i in range(1, 11)]
+BUILDINGS = ["Warehouse", "Parking", "Rooftop", "ColdStorage", "LoadingBay"]
+FLOORS = [1, 2, 3, 4, 5]
+
+HEADER = "timestamp,sensor_id,location,temperature,humidity,pressure,battery_level,status\n"
+
+
+def gen_row(now_str):
+    sensor_id = random.choice(SENSOR_IDS)
+    building = random.choice(BUILDINGS)
+    floor = random.choice(FLOORS)
+    location = f"{building}-Floor-{floor}"
+
+    temperature = 15.0 + random.random() * 30.0   # 15-45C
+    humidity = 25.0 + random.random() * 65.0       # 25-90%
+    pressure = 980.0 + random.random() * 60.0      # 980-1040 hPa
+    battery = 20.0 + random.random() * 80.0        # 20-100%
+
+    if battery < 30:
+        status = "low_battery"
+    elif temperature > 35:
+        status = "high_temp"
+    elif temperature < 18:
+        status = "low_temp"
+    elif humidity > 75:
+        status = "high_humidity"
+    else:
+        status = "normal"
+
+    return (f"{now_str},{sensor_id},{location},{temperature:.2f},"
+            f"{humidity:.2f},{pressure:.2f},{battery:.2f},{status}\n")
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(__doc__)
+        sys.exit(1)
+
+    out_path = sys.argv[1]
+    count = int(sys.argv[2])
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    CHUNK = 50_000
+    written = 0
+    with open(out_path, "w", buffering=1024 * 1024) as f:
+        f.write(HEADER)
+        buf = []
+        while written < count:
+            n = min(CHUNK, count - written)
+            for _ in range(n):
+                buf.append(gen_row(now_str))
+            f.write("".join(buf))
+            buf.clear()
+            written += n
+            if written % 500_000 == 0 or written == count:
+                print(f"  ... {written:,}/{count:,} rows written", flush=True)
+
+    print(f"Done. Wrote {count:,} rows to {out_path}")
+
+
+if __name__ == "__main__":
+    main()
+
