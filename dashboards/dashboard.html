@@ -987,24 +987,23 @@ select:focus,input:focus{border-color:var(--teal)}
     <div class="section-header" style="cursor:default">
       <span class="section-num">📈</span>
       <span class="section-title">PXF External Table — Stock Prices</span>
-      <span class="section-desc">Federated query over ORC/Parquet files on MinIO/S3 — no load step, WarehousePG reads the files directly</span>
+      <span class="section-desc">Federated query over Parquet files on MinIO/S3 — no load step, WarehousePG reads the files directly</span>
     </div>
     <div class="section-body open" style="display:block">
       <div class="info-box">
         Unlike every other tab in this dashboard, nothing here is copied into WarehousePG first.
-        <code>stock_prices_orc</code> / <code>stock_prices_parquet</code> are PXF external tables pointing straight
+        <code>stock_prices_parquet</code> is a PXF external table pointing straight
         at files sitting in MinIO (S3-compatible object storage) — every query reads the files live via the
-        <code>s3:orc</code> / <code>s3:parquet</code> profiles. Requires the <code>pxf</code> extension
+        <code>s3:parquet</code> profile. Requires the <code>pxf</code> extension
         (<code>CREATE EXTENSION pxf;</code>) and a PXF server profile named <code>minio</code> already configured.
         This is the "query data lake files in place" story: same SQL interface, zero ingestion pipeline.
       </div>
       <div class="ctrl-row">
         <span class="ctrl-label" style="min-width:auto">Format</span>
         <select id="pxf-format" onchange="loadPxf()">
-          <option value="orc">ORC</option>
           <option value="parquet">Parquet</option>
         </select>
-        <button class="run-btn" onclick="pxfCreateTable()">▶ Create / Refresh Both Tables</button>
+        <button class="run-btn" onclick="pxfCreateTable()">▶ Create / Refresh Table</button>
         <button class="run-btn secondary" onclick="loadPxf()">↺ Reload Data</button>
       </div>
       <div id="pxf-create-output"></div>
@@ -1017,7 +1016,7 @@ select:focus,input:focus{border-color:var(--teal)}
     <div class="section-header" onclick="toggle(this)">
       <span class="section-num">01</span>
       <span class="section-title">Sample Query</span>
-      <span class="section-desc">SELECT symbol, date, open, high FROM stock_prices_orc LIMIT 10</span>
+      <span class="section-desc">SELECT symbol, date, open, high FROM stock_prices_parquet LIMIT 10</span>
       <span class="chevron open">▼</span>
     </div>
     <div class="section-body open">
@@ -2286,7 +2285,7 @@ async function loadMadlib(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PXF — external table over ORC files on MinIO/S3 (federated query)
+//  PXF — external table over Parquet files on MinIO/S3 (federated query)
 // ══════════════════════════════════════════════════════════════════════════════
 async function pxfCreateTable(){
   const outEl = document.getElementById('pxf-create-output');
@@ -2307,7 +2306,7 @@ async function pxfCreateTable(){
 
 function pxfFormat(){
   const el = document.getElementById('pxf-format');
-  return el ? el.value : 'orc';
+  return el ? el.value : 'parquet';
 }
 
 async function loadPxf(){
@@ -2916,5 +2915,8 @@ async function tick(){
 </script>
 </body>
 </html>
+
+
+
 
 
