@@ -1,0 +1,70 @@
+WHPG Real Streaming Demo — Restart Guide
+Quick reference for stopping, resetting, and restarting the Forrester/WHPG streaming demo (E-commerce + IoT + TU CDC pipeline).
+1. Connect to the box
+ssh ec2-user@<host>
+su - gpadmin
+cd forrester/repo/scripts
+2. Choose your restart path
+Option A — Full reset (recommended for a clean demo run)
+Stops everything, drops/recreates tables, resets ClickHouse, resets the CDC pipeline, then starts everything fresh with a health check.
+
+./reset-demo-cdc.sh --region <region>
+
+Example used previously:
+
+./reset-demo-cdc.sh --region egypt
+
+This single command does all of the following for you:
+
+Stops FlowServer, jobs, generators, and the dashboard API
+Drops + recreates ecommerce_orders and iot_sensor_readings
+Resets the ClickHouse ecommerce-orders mirror
+Resets the TU CDC pipeline (Postgres → Debezium → Kafka → WarehousePG)
+Starts everything fresh (generators, FlowServer jobs, dashboard API)
+Runs a full health check on all services
+Option B — Simple stop/start (no data reset)
+If you just need to bounce the demo without wiping data:
+
+./stop-demo.sh
+./start-demo.sh
+3. After a reset — manual step required
+⚠️ The reset script does NOT restart the CDC FlowServer jobs automatically. After topics are recreated, go to the FlowServer UI and resubmit/restart:
+
+tu_load_credit_accounts
+tu_load_bureau_score_events
+4. Verify it's up
+Check the URLs:
+
+Dashboard: http://localhost:5055/
+FlowServer: http://localhost:6060/
+
+Or tail the logs:
+
+tail -f /tmp/flowserver-demo/logs/*.log
+
+The reset script's own health check confirms:
+
+Kafka broker reachable (port 9092)
+Debezium connect-standalone running + replication slot debezium_tu_slot active
+FlowServer reachable (port 6060), order-generator and iot-generator running
+dashboard-api running
+ClickHouse reachable (port 9094), with default.ecommerce_orders row count climbing as the topic refills
+5. Notes / gotchas
+Generators run at 10,000/s for both e-commerce orders and IoT sensor data by default.
+The --region flag controls the e-commerce order generator's region (e.g. egypt).
+"Not found" / "no PID file" messages during the stop phase of a reset are expected if nothing was running — the script treats these as OK, not errors.
+Kafka topics ecommerce-orders and iot-sensors-csv are deleted and recreated as part of a full reset.
+TU Kafka topics (tu.oltp.credit_accounts, tu.oltp.bureau_score_events) are also deleted/recreated — this is why the FlowServer CDC jobs need to be manually resubmitted afterward (Step 3 above).
+Quick command cheat sheet
+Goal
+Command
+Full clean reset + restart
+./reset-demo-cdc.sh --region <region>
+Stop everything
+./stop-demo.sh
+Start everything (no reset)
+./start-demo.sh
+Watch logs
+tail -f /tmp/flowserver-demo/logs/*.log
+
+
